@@ -10,7 +10,7 @@ const app: Application = express();
 app.use(express.json());
 app.use(morgan('dev'));
 
-app.use(cors({ origin: ['http://localhost:5173', ''] }));
+app.use(cors({ origin: ['http://localhost:5173', 'https://store-managementdemo.netlify.app'] }));
 
 // application routes
 app.use('/api/v1', rootRouter);
