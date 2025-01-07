@@ -13,6 +13,7 @@
     "format:fix": "npx prettier --write src"
   },
   "dependencies": {
+    "@vercel/node": "^5.0.2",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
