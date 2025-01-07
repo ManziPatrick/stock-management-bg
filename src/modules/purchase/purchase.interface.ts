@@ -10,4 +10,5 @@ export interface IPurchase {
   unitPrice: number;
   totalPrice: number;
   paid?: number;
+  measurement?: any;
 }

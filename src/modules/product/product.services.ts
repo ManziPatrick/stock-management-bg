@@ -216,6 +216,9 @@ class ProductServices extends BaseServices<any> {
   }
 
   async create(payload: Partial<IProduct>, userId: string): Promise<ProductCreateResponse> {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+  
     try {
       const productData = {
         ...payload,
@@ -225,31 +228,42 @@ class ProductServices extends BaseServices<any> {
         ...(payload.brand && { brand: new Types.ObjectId(payload.brand) }),
         stock: Number(payload.stock),
       };
-
+  
       const seller = await Seller.findById(payload.seller);
       if (!seller) {
         throw new CustomError(404, 'Seller not found');
       }
-
-      if (payload.measurement) {
-        if (!this.validateMeasurement(payload.measurement)) {
-          throw new CustomError(400, 'Invalid measurement data');
-        }
+  
+      if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+        throw new CustomError(400, 'Invalid measurement data');
       }
-
-      const product = await this.model.create(productData);
-      
-      // Send notification for new product
-      await this.sendProductNotification(product, 'Created');
-      await this.checkAndNotifyStock(product);
-
+  
+      const product = await this.model.create([productData], { session });
+  
+      await Purchase.create([{
+        user: userId,
+        seller: product[0].seller,
+        product: product[0]._id,
+        sellerName: seller.name,
+        productName: product[0].name,
+        quantity: product[0].stock,
+        unitPrice: product[0].price,
+        totalPrice: product[0].stock * product[0].price,
+        measurement: product[0].measurement,
+      }], { session });
+  
+      await session.commitTransaction();
+      await this.sendProductNotification(product[0], 'Created');
+      await this.checkAndNotifyStock(product[0]);
+  
       return {
         success: true,
         statusCode: 201,
         message: 'Product created successfully',
-        data: product
+        data: product[0]
       };
     } catch (error: any) {
+      await session.abortTransaction();
       if (error.name === 'ValidationError') {
         throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
       }
@@ -257,6 +271,8 @@ class ProductServices extends BaseServices<any> {
         throw new CustomError(400, 'Duplicate product entry');
       }
       throw new CustomError(500, 'Failed to create product');
+    } finally {
+      session.endSession();
     }
   }
 
