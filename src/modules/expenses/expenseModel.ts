@@ -7,7 +7,7 @@ const expenseSchema = new Schema<IExpense>(
     amount: { type: Number, required: true },
     description: { type: String },
     date: { type: Date, required: true },
-    createdBy: { type: Types.ObjectId, ref: 'user', required: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'user', required: true },
     status: { type: String, enum: ['ACTIVE', 'ARCHIVED'], default: 'ACTIVE' },
   },
   { timestamps: true }

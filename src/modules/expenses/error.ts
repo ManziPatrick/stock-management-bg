@@ -1,3 +1,4 @@
+
 export class ApiError extends Error {
     statusCode: number;
     success: boolean;
@@ -19,7 +20,7 @@ export class ApiError extends Error {
   
   // middleware/globalErrorHandler.ts
   import { ErrorRequestHandler } from 'express';
-  import { ApiError } from '../types/error';
+
   
   export const globalErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
     error.statusCode = error.statusCode || 500;

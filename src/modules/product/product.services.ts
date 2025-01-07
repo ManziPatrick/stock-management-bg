@@ -384,7 +384,7 @@ class ProductServices extends BaseServices<any> {
   
     // Fetch paginated data
     let data = await this.model.aggregate(pipeline);
-    await this.sendProductNotification(matchStage,'data');
+    // await this.sendProductNotification("welcome",'data');
 
     // Fetch the total count for pagination
     const totalCount = await this.model.aggregate([

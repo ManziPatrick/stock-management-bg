@@ -30,12 +30,12 @@ export const getExpenses = async (
     const expenses = await getAllExpenses({
       page: pageNumber,
       limit: limitNumber,
-      search,
-      status,
+      search: search as string,
+      status: status as string,
     });
 
     // Calculate the total number of expenses (for pagination purposes)
-    const totalExpenses = await getTotalExpenses({ search, status });
+    const totalExpenses = await getTotalExpenses({ search: search as string, status: status as string });
 
     const totalPages = Math.ceil(totalExpenses / limitNumber);
 

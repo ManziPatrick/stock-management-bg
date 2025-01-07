@@ -1,3 +1,5 @@
+import { Types } from 'mongoose';
+
 export interface IExpense extends Document {
     title: string;
     amount: number;

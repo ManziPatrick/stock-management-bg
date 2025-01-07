@@ -60,7 +60,7 @@ class UserControllers {
 
     // Ensure admin can only update their created users
     const user = await this.services.getUserById(req.params.userId);
-    if (user.createdBy.toString() !== req.user._id.toString()) {
+    if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
       throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
     }
 
