@@ -18,6 +18,7 @@ interface ProductCreateResponse {
   success: boolean;
   statusCode: number;
   message: string;
+  
   data?: IProduct;
 }
 
@@ -400,7 +401,19 @@ class ProductServices extends BaseServices<any> {
   
     // Fetch paginated data
     let data = await this.model.aggregate(pipeline);
-    // await this.sendProductNotification("welcome",'data');
+
+    // Calculate totals with proper field references
+    const totals = await this.model.aggregate([
+      matchStage,
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalStock: { $sum: '$stock' },
+          totalValue: { $sum: { $multiply: ['$stock', '$price'] } }
+        }
+      }
+    ]);
 
     // Fetch the total count for pagination
     const totalCount = await this.model.aggregate([
@@ -415,11 +428,19 @@ class ProductServices extends BaseServices<any> {
       { path: 'seller', select: '-__v -user -createdAt -updatedAt' }
     ]);
   
+    // Calculate totals first to ensure we have values
+    const summary = totals[0] || {
+      totalProducts: 0,
+      totalStock: 0,
+      totalValue: 0
+    };
+
     return { 
       data, 
-      totalCount: totalCount[0]?.total || 0 
+      totalCount: totalCount[0]?.total || 0,
+      summary
     };
-  }
+}
 
   async countTotalProduct(userId?: string) {
     try {
@@ -447,6 +468,20 @@ class ProductServices extends BaseServices<any> {
     const pipeline = this.buildPipeline(matchStage, query);
     
     let data = await this.model.aggregate(pipeline);
+
+    // Calculate totals with a separate aggregation
+    const totals = await this.model.aggregate([
+      matchStage,
+      {
+        $group: {
+          _id: null,
+          totalProducts: { $sum: 1 },
+          totalStock: { $sum: '$stock' },
+          totalValue: { $sum: { $multiply: ['$stock', '$price'] } }
+        }
+      }
+    ]);
+
     const totalCount = await this.model.aggregate([matchStage, { $count: 'total' }]);
 
     data = await this.model.populate(data, [
@@ -455,12 +490,19 @@ class ProductServices extends BaseServices<any> {
       { path: 'seller', select: '-__v -user -createdAt -updatedAt' }
     ]);
 
+    // Calculate summary with fallback values
+    const summary = totals[0] || {
+      totalProducts: 0,
+      totalStock: 0,
+      totalValue: 0
+    };
+
     return { 
       data, 
-      totalCount: totalCount[0]?.total || 0 
+      totalCount: totalCount[0]?.total || 0,
+      summary
     };
-  }
-
+}
   async read(id: string, userId: string) {
     const product = await this.model.findOne({ 
       user: new Types.ObjectId(userId), 

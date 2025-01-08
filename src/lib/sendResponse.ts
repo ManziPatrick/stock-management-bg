@@ -13,6 +13,8 @@ interface IMeta {
   limit: number;
   total: number;
   totalPage: number;
+  totalPurchasedAmount?:any;
+  summary?: any;
 }
 
 const sendResponse = <T>(res: Response, responses: IResponse<T>) => {

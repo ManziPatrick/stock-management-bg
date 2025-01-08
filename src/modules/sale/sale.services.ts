@@ -29,7 +29,8 @@ class SaleServices extends BaseServices<any> {
           _id: null,
           sizeWiseRevenue: { $push: '$$ROOT' },
           totalOverallRevenue: { $sum: '$totalRevenue' },
-          totalOverallStock: { $sum: '$totalStock' }
+          totalOverallStock: { $sum: '$totalStock' },
+          
         }
       }
     ]);
@@ -98,6 +99,40 @@ class SaleServices extends BaseServices<any> {
     const search = query.search ? (query.search as string) : '';
     const totalRevenue = await this.calculateTotalStockRevenue();
 
+    // Calculate sold products total
+    const soldProductsTotal = await this.model.aggregate([
+      {
+        $match: {
+          $or: [
+            { productName: { $regex: search, $options: 'i' } },
+            { buyerName: { $regex: search, $options: 'i' } },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalQuantitySold: { $sum: '$quantity' },
+          totalSaleAmount: { $sum: '$totalPrice' },
+          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalProductPrice: { $sum: '$productPrice' },
+          profit: { 
+            $sum: { 
+              $subtract: ['$SellingPrice', '$productPrice'] 
+            } 
+          },
+          totalMarginProfit: {
+            $sum: {
+              $multiply: [
+                '$quantity',
+                { $subtract: ['$SellingPrice', '$productPrice'] }
+              ]
+            }
+          },
+        }
+      }
+    ]);
+
     const data = await this.model.aggregate([
       {
         $match: {
@@ -105,7 +140,6 @@ class SaleServices extends BaseServices<any> {
             { productName: { $regex: search, $options: 'i' } },
             { buyerName: { $regex: search, $options: 'i' } },
           ],
-        
         },
       },
       ...sortAndPaginatePipeline(query),
@@ -116,15 +150,24 @@ class SaleServices extends BaseServices<any> {
         { productName: { $regex: search, $options: 'i' } },
         { buyerName: { $regex: search, $options: 'i' } },
       ],
-     
     });
+
+    const summary = soldProductsTotal[0] || {
+      totalQuantitySold: 0,
+      totalSaleAmount: 0,
+      totalSellingPrice: 0,
+      totalProductPrice: 0,
+      totalMarginProfit: 0,
+      profit: 0
+    };
 
     return {
       data,
       totalCount,
-      totalRevenue: totalRevenue[0]
+      totalRevenue: totalRevenue[0],
+      summary
     };
-  }
+}
 
   async readAllDaily(userId: string) {
     const totalExpenses = await this.calculateExpenses(userId);
@@ -143,6 +186,7 @@ class SaleServices extends BaseServices<any> {
           totalQuantity: { $sum: '$quantity' },
           totalSellingPrice: { $sum: '$SellingPrice' },
           totalProductPrice: { $sum: '$productPrice' },
+          totalPurchasedAmount: { $sum: '$productPrice' },
           totalExpenses: { $first: totalExpenses },
         },
       },
@@ -160,7 +204,8 @@ class SaleServices extends BaseServices<any> {
 
     return {
       dailyData,
-      totalRevenue: totalRevenue[0]
+      totalRevenue: totalRevenue[0],
+      totalPurchasedAmount: dailyData.reduce((sum, year) => sum + year.totalPurchasedAmount, 0),
     };
   }
 
@@ -191,6 +236,7 @@ class SaleServices extends BaseServices<any> {
           }
         },
       },
+      
       {
         $sort: { '_id.year': 1, '_id.week': 1 },
       },
@@ -256,7 +302,7 @@ class SaleServices extends BaseServices<any> {
   async readAllYearly(userId: string) {
     const totalExpenses = await this.calculateExpenses(userId);
     const totalRevenue = await this.calculateTotalStockRevenue();
-
+  
     const yearlyData = await this.model.aggregate([
       {
         $match: {
@@ -270,6 +316,7 @@ class SaleServices extends BaseServices<any> {
           totalQuantity: { $sum: '$quantity' },
           totalSellingPrice: { $sum: '$SellingPrice' },
           totalProductPrice: { $sum: '$productPrice' },
+          totalPurchasedAmount: { $sum: { $multiply: ['$quantity', '$productPrice'] } },
           totalExpenses: { $first: totalExpenses },
         },
       },
@@ -277,19 +324,20 @@ class SaleServices extends BaseServices<any> {
         $addFields: {
           totalProfit: {
             $subtract: ['$totalSellingPrice', { $add: ['$totalProductPrice', '$totalExpenses'] }],
-          }
+          },
         },
       },
       {
         $sort: { '_id.year': 1 },
       },
     ]);
-
+  
     return {
       yearlyData,
-      totalRevenue: totalRevenue[0]
+      totalRevenue: totalRevenue[0],
     };
   }
+  
 }
 
 const saleServices = new SaleServices(Sale, 'Sale');

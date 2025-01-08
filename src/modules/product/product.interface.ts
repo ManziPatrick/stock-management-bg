@@ -19,6 +19,7 @@ export interface IProduct {
   description?: string;
   createdAt?: Date;
   updatedAt?: Date;
+  
 }
 
 interface ProductCreateResponse {

@@ -86,11 +86,16 @@ class SaleControllers {
     try {
       const { user } = req;
       const result = await saleServices.readAllYearly(user._id);
-      res.status(200).json({ success: true, data: result });
+      res.status(200).json({
+        success: true,
+        data: result.yearlyData,
+        totalRevenue: result.totalRevenue,
+      });
     } catch (error) {
       next(error);
     }
   }
+  
 }
 
 export default new SaleControllers();
