@@ -299,9 +299,25 @@ class SaleServices extends BaseServices<any> {
     };
   }
 
+  async getTotalPurchasedAmount() {
+    const result = await this.model.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalPurchasedAmount: { $sum: '$totalPrice' }
+        }
+      }
+    ]);
+
+   
+    return result.length > 0 ? result[0].totalPurchasedAmount : 0;
+  }
+
+  // Updated readAllYearly method
   async readAllYearly(userId: string) {
     const totalExpenses = await this.calculateExpenses(userId);
     const totalRevenue = await this.calculateTotalStockRevenue();
+    const totalPurchasedAmount = await this.getTotalPurchasedAmount(); // Fetch total purchased amount
   
     const yearlyData = await this.model.aggregate([
       {
@@ -316,7 +332,6 @@ class SaleServices extends BaseServices<any> {
           totalQuantity: { $sum: '$quantity' },
           totalSellingPrice: { $sum: '$SellingPrice' },
           totalProductPrice: { $sum: '$productPrice' },
-          totalPurchasedAmount: { $sum: { $multiply: ['$quantity', '$productPrice'] } },
           totalExpenses: { $first: totalExpenses },
         },
       },
@@ -325,6 +340,7 @@ class SaleServices extends BaseServices<any> {
           totalProfit: {
             $subtract: ['$totalSellingPrice', { $add: ['$totalProductPrice', '$totalExpenses'] }],
           },
+          totalPurchasedAmount: totalPurchasedAmount, // Include total purchased amount
         },
       },
       {
@@ -337,6 +353,7 @@ class SaleServices extends BaseServices<any> {
       totalRevenue: totalRevenue[0],
     };
   }
+  
   
 }
 

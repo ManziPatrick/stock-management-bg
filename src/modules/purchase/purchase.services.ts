@@ -55,7 +55,7 @@ class PurchaseServices extends BaseServices<any> {
   /**
    * Get total sum of purchased products
    */
-  async getTotalPurchasedAmount() {
+   async getTotalPurchasedAmount() {
     const result = await this.model.aggregate([
       {
         $group: {
