@@ -114,7 +114,7 @@ class SaleServices extends BaseServices<any> {
           _id: null,
           totalQuantitySold: { $sum: '$quantity' },
           totalSaleAmount: { $sum: '$totalPrice' },
-          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
           totalProductPrice: { $sum: '$productPrice' },
           profit: { 
             $sum: { 
@@ -184,7 +184,7 @@ class SaleServices extends BaseServices<any> {
         $group: {
           _id: { day: { $dayOfMonth: '$date' }, month: { $month: '$date' }, year: { $year: '$date' } },
           totalQuantity: { $sum: '$quantity' },
-          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
           totalProductPrice: { $sum: '$productPrice' },
           totalPurchasedAmount: { $sum: '$productPrice' },
           totalExpenses: { $first: totalExpenses },
@@ -224,7 +224,7 @@ class SaleServices extends BaseServices<any> {
         $group: {
           _id: { week: { $isoWeek: '$date' }, year: { $isoWeekYear: '$date' } },
           totalQuantity: { $sum: '$quantity' },
-          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
           totalProductPrice: { $sum: '$productPrice' },
           totalExpenses: { $first: totalExpenses },
         },
@@ -276,7 +276,7 @@ class SaleServices extends BaseServices<any> {
         $group: {
           _id: { month: { $month: '$date' }, year: { $year: '$date' } },
           totalQuantity: { $sum: '$quantity' },
-          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
           totalProductPrice: { $sum: '$productPrice' },
           totalExpenses: { $first: totalExpenses },
         },
@@ -309,7 +309,7 @@ class SaleServices extends BaseServices<any> {
       }
     ]);
 
-   
+    // Return the aggregated total or 0 if no purchases are found
     return result.length > 0 ? result[0].totalPurchasedAmount : 0;
   }
 
@@ -330,7 +330,7 @@ class SaleServices extends BaseServices<any> {
         $group: {
           _id: { year: { $year: '$date' } },
           totalQuantity: { $sum: '$quantity' },
-          totalSellingPrice: { $sum: '$SellingPrice' },
+          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
           totalProductPrice: { $sum: '$productPrice' },
           totalExpenses: { $first: totalExpenses },
         },
