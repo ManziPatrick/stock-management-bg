@@ -218,29 +218,41 @@ class ProductServices extends baseServices_1.default {
     }
     create(payload, userId) {
         return __awaiter(this, void 0, void 0, function* () {
+            const session = yield mongoose_1.default.startSession();
+            session.startTransaction();
             try {
                 const productData = Object.assign(Object.assign(Object.assign(Object.assign({}, payload), { user: new mongoose_1.Types.ObjectId(userId), seller: new mongoose_1.Types.ObjectId(payload.seller), category: new mongoose_1.Types.ObjectId(payload.category) }), (payload.brand && { brand: new mongoose_1.Types.ObjectId(payload.brand) })), { stock: Number(payload.stock) });
                 const seller = yield seller_model_1.default.findById(payload.seller);
                 if (!seller) {
                     throw new customError_1.default(404, 'Seller not found');
                 }
-                if (payload.measurement) {
-                    if (!this.validateMeasurement(payload.measurement)) {
-                        throw new customError_1.default(400, 'Invalid measurement data');
-                    }
+                if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+                    throw new customError_1.default(400, 'Invalid measurement data');
                 }
-                const product = yield this.model.create(productData);
-                // Send notification for new product
-                yield this.sendProductNotification(product, 'Created');
-                yield this.checkAndNotifyStock(product);
+                const product = yield this.model.create([productData], { session });
+                yield purchase_model_1.default.create([{
+                        user: userId,
+                        seller: product[0].seller,
+                        product: product[0]._id,
+                        sellerName: seller.name,
+                        productName: product[0].name,
+                        quantity: product[0].stock,
+                        unitPrice: product[0].price,
+                        totalPrice: product[0].stock * product[0].price,
+                        measurement: product[0].measurement,
+                    }], { session });
+                yield session.commitTransaction();
+                yield this.sendProductNotification(product[0], 'Created');
+                yield this.checkAndNotifyStock(product[0]);
                 return {
                     success: true,
                     statusCode: 201,
                     message: 'Product created successfully',
-                    data: product
+                    data: product[0]
                 };
             }
             catch (error) {
+                yield session.abortTransaction();
                 if (error.name === 'ValidationError') {
                     throw new customError_1.default(400, Object.values(error.errors).map((err) => err.message).join(', '));
                 }
@@ -248,6 +260,9 @@ class ProductServices extends baseServices_1.default {
                     throw new customError_1.default(400, 'Duplicate product entry');
                 }
                 throw new customError_1.default(500, 'Failed to create product');
+            }
+            finally {
+                session.endSession();
             }
         });
     }
@@ -351,7 +366,18 @@ class ProductServices extends baseServices_1.default {
             const pipeline = this.buildPipeline(matchStage, query);
             // Fetch paginated data
             let data = yield this.model.aggregate(pipeline);
-            // await this.sendProductNotification("welcome",'data');
+            // Calculate totals with proper field references
+            const totals = yield this.model.aggregate([
+                matchStage,
+                {
+                    $group: {
+                        _id: null,
+                        totalProducts: { $sum: 1 },
+                        totalStock: { $sum: '$stock' },
+                        totalValue: { $sum: { $multiply: ['$stock', '$price'] } }
+                    }
+                }
+            ]);
             // Fetch the total count for pagination
             const totalCount = yield this.model.aggregate([
                 matchStage,
@@ -363,9 +389,16 @@ class ProductServices extends baseServices_1.default {
                 { path: 'brand', select: '-__v -user' },
                 { path: 'seller', select: '-__v -user -createdAt -updatedAt' }
             ]);
+            // Calculate totals first to ensure we have values
+            const summary = totals[0] || {
+                totalProducts: 0,
+                totalStock: 0,
+                totalValue: 0
+            };
             return {
                 data,
-                totalCount: ((_a = totalCount[0]) === null || _a === void 0 ? void 0 : _a.total) || 0
+                totalCount: ((_a = totalCount[0]) === null || _a === void 0 ? void 0 : _a.total) || 0,
+                summary
             };
         });
     }
@@ -397,15 +430,34 @@ class ProductServices extends baseServices_1.default {
             const matchStage = this.buildMatchStage(query);
             const pipeline = this.buildPipeline(matchStage, query);
             let data = yield this.model.aggregate(pipeline);
+            // Calculate totals with a separate aggregation
+            const totals = yield this.model.aggregate([
+                matchStage,
+                {
+                    $group: {
+                        _id: null,
+                        totalProducts: { $sum: 1 },
+                        totalStock: { $sum: '$stock' },
+                        totalValue: { $sum: { $multiply: ['$stock', '$price'] } }
+                    }
+                }
+            ]);
             const totalCount = yield this.model.aggregate([matchStage, { $count: 'total' }]);
             data = yield this.model.populate(data, [
                 { path: 'category', select: '-__v -user' },
                 { path: 'brand', select: '-__v -user' },
                 { path: 'seller', select: '-__v -user -createdAt -updatedAt' }
             ]);
+            // Calculate summary with fallback values
+            const summary = totals[0] || {
+                totalProducts: 0,
+                totalStock: 0,
+                totalValue: 0
+            };
             return {
                 data,
-                totalCount: ((_a = totalCount[0]) === null || _a === void 0 ? void 0 : _a.total) || 0
+                totalCount: ((_a = totalCount[0]) === null || _a === void 0 ? void 0 : _a.total) || 0,
+                summary
             };
         });
     }

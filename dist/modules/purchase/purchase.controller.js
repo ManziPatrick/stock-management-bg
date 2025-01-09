@@ -32,19 +32,22 @@ class PurchaseController {
         // read
         this.getAll = (0, asyncHandler_1.default)((req, res) => __awaiter(this, void 0, void 0, function* () {
             const result = yield this.services.getAll(req.query);
+            const totalPurchasedAmount = yield this.services.getTotalPurchasedAmount();
             const page = Number(req.query.page) || 1;
             const limit = Number(req.query.limit) || 10;
             (0, sendResponse_1.default)(res, {
                 success: true,
                 statusCode: http_status_1.default.OK,
-                message: 'Purchase retrieved successfully!',
+                message: 'Purchases retrieved successfully!',
                 meta: {
                     page,
                     limit,
                     total: (result === null || result === void 0 ? void 0 : result.totalCount) || 0,
-                    totalPage: Math.ceil((result === null || result === void 0 ? void 0 : result.totalCount) / limit)
+                    totalPage: Math.ceil((result === null || result === void 0 ? void 0 : result.totalCount) / limit),
+                    totalPurchasedAmount: totalPurchasedAmount
                 },
-                data: result.data
+                data: result.data,
+                // Add this field to include the total purchased amount
             });
         }));
         // update

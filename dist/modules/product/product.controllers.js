@@ -115,6 +115,7 @@ class ProductControllers {
                         limit,
                         total: (result === null || result === void 0 ? void 0 : result.totalCount) || 0,
                         totalPage: Math.ceil((result === null || result === void 0 ? void 0 : result.totalCount) / limit),
+                        summary: (result === null || result === void 0 ? void 0 : result.summary) || null,
                     },
                     data: result.data,
                 });

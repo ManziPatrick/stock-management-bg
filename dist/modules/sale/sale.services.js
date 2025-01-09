@@ -42,7 +42,7 @@ class SaleServices extends baseServices_1.default {
                         _id: null,
                         sizeWiseRevenue: { $push: '$$ROOT' },
                         totalOverallRevenue: { $sum: '$totalRevenue' },
-                        totalOverallStock: { $sum: '$totalStock' }
+                        totalOverallStock: { $sum: '$totalStock' },
                     }
                 }
             ]);
@@ -102,6 +102,39 @@ class SaleServices extends baseServices_1.default {
         return __awaiter(this, arguments, void 0, function* (query = {}) {
             const search = query.search ? query.search : '';
             const totalRevenue = yield this.calculateTotalStockRevenue();
+            // Calculate sold products total
+            const soldProductsTotal = yield this.model.aggregate([
+                {
+                    $match: {
+                        $or: [
+                            { productName: { $regex: search, $options: 'i' } },
+                            { buyerName: { $regex: search, $options: 'i' } },
+                        ],
+                    },
+                },
+                {
+                    $group: {
+                        _id: null,
+                        totalQuantitySold: { $sum: '$quantity' },
+                        totalSaleAmount: { $sum: '$totalPrice' },
+                        totalSellingPrice: { $sum: '$SellingPrice' },
+                        totalProductPrice: { $sum: '$productPrice' },
+                        profit: {
+                            $sum: {
+                                $subtract: ['$SellingPrice', '$productPrice']
+                            }
+                        },
+                        totalMarginProfit: {
+                            $sum: {
+                                $multiply: [
+                                    '$quantity',
+                                    { $subtract: ['$SellingPrice', '$productPrice'] }
+                                ]
+                            }
+                        },
+                    }
+                }
+            ]);
             const data = yield this.model.aggregate([
                 {
                     $match: {
@@ -119,10 +152,19 @@ class SaleServices extends baseServices_1.default {
                     { buyerName: { $regex: search, $options: 'i' } },
                 ],
             });
+            const summary = soldProductsTotal[0] || {
+                totalQuantitySold: 0,
+                totalSaleAmount: 0,
+                totalSellingPrice: 0,
+                totalProductPrice: 0,
+                totalMarginProfit: 0,
+                profit: 0
+            };
             return {
                 data,
                 totalCount,
-                totalRevenue: totalRevenue[0]
+                totalRevenue: totalRevenue[0],
+                summary
             };
         });
     }
@@ -143,6 +185,7 @@ class SaleServices extends baseServices_1.default {
                         totalQuantity: { $sum: '$quantity' },
                         totalSellingPrice: { $sum: '$SellingPrice' },
                         totalProductPrice: { $sum: '$productPrice' },
+                        totalPurchasedAmount: { $sum: '$productPrice' },
                         totalExpenses: { $first: totalExpenses },
                     },
                 },
@@ -159,7 +202,8 @@ class SaleServices extends baseServices_1.default {
             ]);
             return {
                 dailyData,
-                totalRevenue: totalRevenue[0]
+                totalRevenue: totalRevenue[0],
+                totalPurchasedAmount: dailyData.reduce((sum, year) => sum + year.totalPurchasedAmount, 0),
             };
         });
     }
@@ -267,6 +311,7 @@ class SaleServices extends baseServices_1.default {
                         totalQuantity: { $sum: '$quantity' },
                         totalSellingPrice: { $sum: '$SellingPrice' },
                         totalProductPrice: { $sum: '$productPrice' },
+                        totalPurchasedAmount: { $sum: { $multiply: ['$quantity', '$productPrice'] } },
                         totalExpenses: { $first: totalExpenses },
                     },
                 },
@@ -274,7 +319,7 @@ class SaleServices extends baseServices_1.default {
                     $addFields: {
                         totalProfit: {
                             $subtract: ['$totalSellingPrice', { $add: ['$totalProductPrice', '$totalExpenses'] }],
-                        }
+                        },
                     },
                 },
                 {
@@ -283,7 +328,7 @@ class SaleServices extends baseServices_1.default {
             ]);
             return {
                 yearlyData,
-                totalRevenue: totalRevenue[0]
+                totalRevenue: totalRevenue[0],
             };
         });
     }

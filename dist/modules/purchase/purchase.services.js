@@ -33,7 +33,7 @@ class PurchaseServices extends baseServices_1.default {
         });
     }
     /**
-     * Read all category of user
+     * Read all purchases of user
      */
     getAll(query) {
         return __awaiter(this, void 0, void 0, function* () {
@@ -41,13 +41,41 @@ class PurchaseServices extends baseServices_1.default {
             const data = yield this.model.aggregate([
                 {
                     $match: {
-                        $or: [{ sellerName: { $regex: search, $options: 'i' } }, { productName: { $regex: search, $options: 'i' } }]
+                        $or: [
+                            { sellerName: { $regex: search, $options: 'i' } },
+                            { productName: { $regex: search, $options: 'i' } }
+                        ]
                     }
                 },
                 ...(0, sortAndPaginate_pipeline_1.default)(query)
             ]);
+            const result = yield this.model.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalPurchasedAmount: { $sum: '$totalPrice' }
+                    }
+                }
+            ]);
             const totalCount = yield this.model.find().countDocuments();
-            return { data, totalCount };
+            return { data, totalCount, result };
+        });
+    }
+    /**
+     * Get total sum of purchased products
+     */
+    getTotalPurchasedAmount() {
+        return __awaiter(this, void 0, void 0, function* () {
+            const result = yield this.model.aggregate([
+                {
+                    $group: {
+                        _id: null,
+                        totalPurchasedAmount: { $sum: '$totalPrice' }
+                    }
+                }
+            ]);
+            // Return the aggregated total or 0 if no purchases are found
+            return result.length > 0 ? result[0].totalPurchasedAmount : 0;
         });
     }
 }

@@ -10,7 +10,8 @@ const purchaseSchema = new mongoose_1.Schema({
     quantity: { type: Number, required: true },
     unitPrice: { type: Number, required: true },
     totalPrice: { type: Number, required: true },
-    paid: { type: Number, default: 0 }
+    paid: { type: Number, default: 0 },
+    measurement: { type: mongoose_1.Schema.Types.Mixed }
 }, { timestamps: true });
 const Purchase = (0, mongoose_1.model)('purchase', purchaseSchema);
 exports.default = Purchase;

@@ -115,7 +115,11 @@ class SaleControllers {
             try {
                 const { user } = req;
                 const result = yield sale_services_1.default.readAllYearly(user._id);
-                res.status(200).json({ success: true, data: result });
+                res.status(200).json({
+                    success: true,
+                    data: result.yearlyData,
+                    totalRevenue: result.totalRevenue,
+                });
             }
             catch (error) {
                 next(error);
