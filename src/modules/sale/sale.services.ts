@@ -178,119 +178,82 @@ async readAllDaily(userId: string) {
   const startOfDay = new Date(today.setHours(0, 0, 0, 0));
   const endOfDay = new Date(today.setHours(23, 59, 59, 999));
 
-  const dailyData = await this.model.aggregate([
-      {
-          $match: {
-              user: new Types.ObjectId(userId),
-              date: {
-                  $exists: true,
-                  $ne: null,
-              },
-              $expr: {
-                  $and: [
-                      { $gte: ['$date', startOfDay] },
-                      { $lte: ['$date', endOfDay] },
-                  ],
-              },
-          },
-      },
-      {
-          $facet: {
-              sales: [
-                  {
-                      $group: {
-                          _id: {
-                              day: { $dayOfMonth: '$date' },
-                              month: { $month: '$date' },
-                              year: { $year: '$date' },
-                          },
-                          totalQuantity: { $sum: '$quantity' },
-                          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                          totalProductPrice: { $sum: '$productPrice' },
-                          totalPurchasedAmount: { $sum: '$totalPrice' },
-                          stockValue: {
-                              $sum: {
-                                  $multiply: ['$productPrice', { $subtract: ['$quantity', 0] }], // Adjust quantity multiplier as needed
-                              },
-                          },
-                      },
-                  },
-              ],
-              expenses: [
-                  {
-                      $match: {
-                          createdBy: new Types.ObjectId(userId),
-                          status: 'ACTIVE',
-                          date: {
-                              $gte: startOfDay,
-                              $lte: endOfDay,
-                          },
-                      },
-                  },
-                  {
-                      $group: {
-                          _id: null,
-                          dailyExpenses: { $sum: '$amount' },
-                      },
-                  },
-              ],
-          },
-      },
-      {
-          $project: {
-              dailyData: {
-                  $map: {
-                      input: '$sales',
-                      as: 'sale',
-                      in: {
-                          _id: '$$sale._id',
-                          totalQuantity: '$$sale.totalQuantity',
-                          totalSellingPrice: '$$sale.totalSellingPrice',
-                          totalProductPrice: '$$sale.totalProductPrice',
-                          totalPurchasedAmount: '$$sale.totalPurchasedAmount',
-                          stockValue: '$$sale.stockValue',
-                          dailyExpenses: {
-                              $ifNull: [
-                                  { $arrayElemAt: ['$expenses.dailyExpenses', 0] },
-                                  0,
-                              ],
-                          },
-                          grossProfit: {
-                              $subtract: ['$$sale.totalSellingPrice', '$$sale.totalPurchasedAmount'],
-                          },
-                          dailyRevenue: '$$sale.totalSellingPrice', // Today's revenue
-                      },
-                  },
-              },
-              totalDailyExpenses: { $ifNull: [{ $arrayElemAt: ['$expenses.dailyExpenses', 0] }, 0] },
-          },
-      },
+  // First, get the expenses separately
+  const dailyExpenses = await Expense.aggregate([
+    {
+      $match: {
+        createdBy: new Types.ObjectId(userId),
+        status: 'ACTIVE',
+        date: {
+          $gte: startOfDay,
+          $lte: endOfDay
+        }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        totalAmount: { $sum: '$amount' }
+      }
+    }
   ]);
 
-  const result = dailyData[0];
-  const todaySummary = result?.dailyData[0] || {
-      totalSellingPrice: 0,
-      totalPurchasedAmount: 0,
-      totalQuantity: 0,
-      grossProfit: 0,
+  const dailyData = await this.model.aggregate([
+    {
+      $match: {
+        user: new Types.ObjectId(userId),
+        date: {
+          $gte: startOfDay,
+          $lte: endOfDay
+        }
+      }
+    },
+    {
+      $group: {
+        _id: {
+          day: { $dayOfMonth: '$date' },
+          month: { $month: '$date' },
+          year: { $year: '$date' }
+        },
+        totalQuantity: { $sum: '$quantity' },
+        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+        totalProductPrice: { $sum: '$productPrice' },
+        totalPurchasedAmount: { $sum: '$totalPrice' },
+        stockValue: {
+          $sum: {
+            $multiply: ['$productPrice', { $subtract: ['$quantity', 0] }]
+          }
+        }
+      }
+    }
+  ]);
+
+  const todayExpenses = dailyExpenses[0]?.totalAmount || 0;
+  const todaySummary = dailyData[0] || {
+    totalSellingPrice: 0,
+    totalPurchasedAmount: 0,
+    totalQuantity: 0,
+    grossProfit: 0
   };
-  const dailyExpenses = result?.totalDailyExpenses || 0;
 
   return {
-      dailyData: result?.dailyData || [],
-      summary: {
-          totalRevenue: totalRevenue[0],
-          totalStock: totalRevenue[0]?.totalOverallStock || 0,
-          dailyRevenue: todaySummary.totalSellingPrice, // Today's revenue
-          dailyPurchased: todaySummary.totalPurchasedAmount,
-          dailyQuantitySold: todaySummary.totalQuantity,
-          dailyExpenses: dailyExpenses,
-          dailyGrossProfit: todaySummary.grossProfit,
-          dailyNetProfit: todaySummary.grossProfit - dailyExpenses,
-          totalPurchasedAmount,
-          totalExpenses: await this.calculateExpenses(userId),
-          netProfit: (result?.dailyData || []).reduce((sum: number, day: any) => sum + (day.grossProfit - dailyExpenses), 0),
-      },
+    dailyData,
+    summary: {
+      totalRevenue: totalRevenue[0],
+      totalStock: totalRevenue[0]?.totalOverallStock || 0,
+      dailyRevenue: todaySummary.totalSellingPrice,
+      dailyPurchased: todaySummary.totalPurchasedAmount,
+      dailyQuantitySold: todaySummary.totalQuantity,
+      dailyExpenses: todayExpenses,
+      dailyGrossProfit: todaySummary.totalSellingPrice - todaySummary.totalPurchasedAmount,
+      dailyNetProfit: (todaySummary.totalSellingPrice - todaySummary.totalPurchasedAmount) - todayExpenses,
+      totalPurchasedAmount,
+      totalExpenses: await this.calculateExpenses(userId),
+      netProfit: dailyData.reduce((sum: number, day: any) => {
+        const dayGrossProfit = day.totalSellingPrice - day.totalPurchasedAmount;
+        return sum + (dayGrossProfit - todayExpenses);
+      }, 0)
+    }
   };
 }
 
@@ -307,79 +270,55 @@ async readAllMonthly(userId: string) {
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
 
-  const monthlyData = await this.model.aggregate([
+  // Get monthly expenses separately
+  const monthlyExpenses = await Expense.aggregate([
     {
       $match: {
-        user: new Types.ObjectId(userId),
-        date: { 
-          $exists: true, 
-          $ne: null,
+        createdBy: new Types.ObjectId(userId),
+        status: 'ACTIVE',
+        date: {
           $gte: monthStart,
           $lte: monthEnd
-        },
-      },
-    },
-    {
-      $lookup: {
-        from: 'expenses',
-        pipeline: [
-          {
-            $match: {
-              user: new Types.ObjectId(userId),
-              date: {
-                $gte: monthStart,
-                $lte: monthEnd
-              }
-            }
-          },
-          {
-            $group: {
-              _id: null,
-              monthlyExpenses: { $sum: '$amount' }
-            }
-          }
-        ],
-        as: 'expensesData'
+        }
       }
     },
     {
       $group: {
-        _id: { month: { $month: '$date' }, year: { $year: '$date' } },
-        totalQuantity: { $sum: '$quantity' },
-        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-        totalProductPrice: { $sum: '$productPrice' },
-        totalPurchasedAmount: { $sum: '$totalPrice' },
-        monthlyExpenses: { $first: { $ifNull: [{ $arrayElemAt: ['$expensesData.monthlyExpenses', 0] }, 0] } },
-        stockValue: { 
-          $sum: { 
-            $multiply: ['$productPrice', { $subtract: ['$quantity', 0] }] 
-          } 
-        },
-      },
-    },
-    {
-      $addFields: {
-        grossProfit: { 
-          $subtract: ['$totalSellingPrice', '$totalPurchasedAmount'] 
-        },
-        netProfit: {
-          $subtract: [
-            { $subtract: ['$totalSellingPrice', '$totalPurchasedAmount'] },
-            '$monthlyExpenses'
-          ]
-        },
-        monthlyRevenue: '$totalSellingPrice'
-      },
+        _id: null,
+        totalAmount: { $sum: '$amount' }
+      }
     }
   ]);
 
+  const monthlyData = await this.model.aggregate([
+    {
+      $match: {
+        user: new Types.ObjectId(userId),
+        date: {
+          $gte: monthStart,
+          $lte: monthEnd
+        }
+      }
+    },
+    {
+      $group: {
+        _id: { 
+          month: { $month: '$date' }, 
+          year: { $year: '$date' } 
+        },
+        totalQuantity: { $sum: '$quantity' },
+        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+        totalProductPrice: { $sum: '$productPrice' },
+        totalPurchasedAmount: { $sum: '$totalPrice' }
+      }
+    }
+  ]);
+
+  const thisMonthExpenses = monthlyExpenses[0]?.totalAmount || 0;
   const thisMonthSummary = monthlyData[0] || {
     totalSellingPrice: 0,
     totalPurchasedAmount: 0,
-    totalQuantity: 0,
-    monthlyExpenses: 0,
-    grossProfit: 0,
-    netProfit: 0
+    totalQuantity: 0
   };
 
   return {
@@ -390,12 +329,15 @@ async readAllMonthly(userId: string) {
       monthlyRevenue: thisMonthSummary.totalSellingPrice,
       monthlyPurchased: thisMonthSummary.totalPurchasedAmount,
       monthlyQuantitySold: thisMonthSummary.totalQuantity,
-      monthlyExpenses: thisMonthSummary.monthlyExpenses,
-      monthlyGrossProfit: thisMonthSummary.grossProfit,
-      monthlyNetProfit: thisMonthSummary.netProfit,
+      monthlyExpenses: thisMonthExpenses,
+      monthlyGrossProfit: thisMonthSummary.totalSellingPrice - thisMonthSummary.totalPurchasedAmount,
+      monthlyNetProfit: (thisMonthSummary.totalSellingPrice - thisMonthSummary.totalPurchasedAmount) - thisMonthExpenses,
       totalPurchasedAmount,
       totalExpenses: await this.calculateExpenses(userId),
-      netProfit: monthlyData.reduce((sum, month) => sum + month.netProfit, 0)
+      netProfit: monthlyData.reduce((sum, month) => {
+        const monthGrossProfit = month.totalSellingPrice - month.totalPurchasedAmount;
+        return sum + (monthGrossProfit - thisMonthExpenses);
+      }, 0)
     }
   };
 }
