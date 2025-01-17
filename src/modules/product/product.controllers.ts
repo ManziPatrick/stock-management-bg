@@ -2,6 +2,11 @@ import httpStatus from 'http-status';
 import asyncHandler from '../../lib/asyncHandler';
 import sendResponse from '../../lib/sendResponse';
 import productServices from './product.services';
+import { upload, uploadToCloudinary } from '../image/cloudinaryConfig';
+import { Request, Response } from 'express';
+import  CustomError  from '../utils/customError';
+import { Types } from 'mongoose';
+import { IProduct } from './product.interface';
 
 class ProductControllers {
   services = productServices;
@@ -10,16 +15,43 @@ class ProductControllers {
    * create new product
    */
 
-  create = asyncHandler(async (req, res) => {
-    const result = await this.services.create(req.body, req.user._id);
+  create = [
+    upload.array('images', 5),
+    uploadToCloudinary,
+    asyncHandler(async (req: Request, res: Response) => {
+      try {
+        const imageUrls = (req.body as any).cloudinaryUrls || [];
+        
+        const measurement = typeof req.body.measurement === 'string' 
+          ? JSON.parse(req.body.measurement)
+          : req.body.measurement;
 
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.CREATED,
-      message: 'Product created successfully!',
-      data: result
-    });
-  });
+        const productData: Partial<IProduct> = {
+          name: req.body.name,
+          seller: new Types.ObjectId(req.body.seller),
+          category: new Types.ObjectId(req.body.category),
+          ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
+          price: Number(req.body.price),
+          stock: Number(req.body.quantity),
+          description: req.body.description,
+          unit: req.body.unit,
+          measurement: measurement,
+          images: imageUrls,
+          user: new Types.ObjectId(req.user._id)
+        };
+
+        const result = await this.services.create(productData, req.user._id);
+        sendResponse(res, result);
+      } catch (error: any) {
+        sendResponse(res, {
+          success: false,
+          statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+          message: error.message || 'Failed to create product'
+        });
+      }
+    })
+  ];
+
   /**
    * Add product to stock
    */

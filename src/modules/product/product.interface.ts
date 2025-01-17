@@ -1,4 +1,4 @@
-import { Types } from "mongoose";
+import { Types } from 'mongoose';
 
 export interface IMeasurement {
   type: 'weight' | 'length' | 'volume' | 'size' | 'pieces';
@@ -8,23 +8,15 @@ export interface IMeasurement {
 
 export interface IProduct {
   user: Types.ObjectId;
-  name: string;
   seller: Types.ObjectId;
   category: Types.ObjectId;
-  brand?: Types.ObjectId;
+  name: string;
   measurement?: IMeasurement;
-  
+  brand?: Types.ObjectId;
   price: number;
   stock: number;
   description?: string;
+  images: string[];
   createdAt?: Date;
   updatedAt?: Date;
-  
-}
-
-interface ProductCreateResponse {
-  success: boolean;
-  statusCode: number;
-  message: string;
-  data?: IProduct;
 }
