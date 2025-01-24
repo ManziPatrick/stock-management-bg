@@ -94,172 +94,280 @@ class SaleServices extends BaseServices<any> {
 
     return totalExpenses[0]?.total || 0;
   }
-
   async readAll(query: Record<string, unknown> = {}) {
     const search = query.search ? (query.search as string) : '';
-    const totalRevenue = await this.calculateTotalStockRevenue();
+    const page = query.page ? Number(query.page) : 1;
+    const limit = query.limit ? Number(query.limit) : 10;
 
-    // Calculate sold products total
-    const soldProductsTotal = await this.model.aggregate([
+    const matchStage = {
+        $match: {
+            $or: [
+                { productName: { $regex: search, $options: 'i' } },
+                { buyerName: { $regex: search, $options: 'i' } },
+            ],
+        },
+    };
+
+    try {
+        // Calculate overall statistics
+        const [stats] = await this.model.aggregate([
+            matchStage,
+            {
+                $group: {
+                    _id: null,
+                    totalQuantitySold: { $sum: '$quantity' },
+                    totalSaleAmount: { $sum: '$totalPrice' },
+                    totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+                    totalProductPrice: { $sum: '$productPrice' },
+                    profit: { 
+                        $sum: { 
+                            $subtract: ['$SellingPrice', '$productPrice'] 
+                        } 
+                    },
+                    totalMarginProfit: {
+                        $sum: {
+                            $multiply: [
+                                '$quantity',
+                                { $subtract: ['$SellingPrice', '$productPrice'] }
+                            ]
+                        }
+                    },
+                    averageSaleAmount: { $avg: '$totalPrice' },
+                    totalCount: { $sum: 1 }
+                }
+            }
+        ]);
+
+        // Get daily statistics
+        const dailyStats = await this.model.aggregate([
+            matchStage,
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$createdAt' },
+                        month: { $month: '$createdAt' },
+                        day: { $dayOfMonth: '$createdAt' }
+                    },
+                    dailyTotal: { $sum: '$totalPrice' },
+                    dailyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+                    quantity: { $sum: '$quantity' },
+                    profit: {
+                        $sum: {
+                            $multiply: [
+                                '$quantity',
+                                { $subtract: ['$SellingPrice', '$productPrice'] }
+                            ]
+                        }
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+        ]);
+
+        // Get monthly statistics
+        const monthlyStats = await this.model.aggregate([
+            matchStage,
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$createdAt' },
+                        month: { $month: '$createdAt' }
+                    },
+                    monthlyTotal: { $sum: '$totalPrice' },
+                    monthlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+                    quantity: { $sum: '$quantity' },
+                    profit: {
+                        $sum: {
+                            $multiply: [
+                                '$quantity',
+                                { $subtract: ['$SellingPrice', '$productPrice'] }
+                            ]
+                        }
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { '_id.year': -1, '_id.month': -1 } }
+        ]);
+
+        // Get yearly statistics
+        const yearlyStats = await this.model.aggregate([
+            matchStage,
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$createdAt' }
+                    },
+                    yearlyTotal: { $sum: '$totalPrice' },
+                    yearlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+                    quantity: { $sum: '$quantity' },
+                    profit: {
+                        $sum: {
+                            $multiply: [
+                                '$quantity',
+                                { $subtract: ['$SellingPrice', '$productPrice'] }
+                            ]
+                        }
+                    },
+                    count: { $sum: 1 }
+                }
+            },
+            { $sort: { '_id.year': -1 } }
+        ]);
+
+        // Get recent sales
+        const recentSales = await this.model.aggregate([
+            matchStage,
+            { $sort: { createdAt: -1 } },
+            { $limit: 5 },
+            {
+                $project: {
+                    _id: 1,
+                    productName: 1,
+                    buyerName: 1,
+                    quantity: 1,
+                    totalPrice: 1,
+                    createdAt: 1,
+                    profit: { 
+                        $multiply: [
+                            '$quantity',
+                            { $subtract: ['$SellingPrice', '$productPrice'] }
+                        ]
+                    }
+                }
+            }
+        ]);
+
+        // Get paginated data
+        const data = await this.model.aggregate([
+            matchStage,
+            ...sortAndPaginatePipeline(query),
+        ]);
+
+        const totalCount = await this.model.countDocuments(matchStage.$match);
+        const totalRevenue = await this.calculateTotalStockRevenue();
+
+        return {
+            statusCode: 200,
+            success: true,
+            message: "Sales retrieved successfully!",
+            data,
+            meta: {
+                page,
+                limit,
+                total: totalCount,
+                totalPage: Math.ceil(totalCount / limit),
+                totalSales: {
+                    stats: stats || {
+                        totalQuantitySold: 0,
+                        totalSaleAmount: 0,
+                        totalSellingPrice: 0,
+                        totalProductPrice: 0,
+                        totalMarginProfit: 0,
+                        profit: 0,
+                        averageSaleAmount: 0,
+                        totalCount: 0
+                    },
+                    dailyStats,
+                    monthlyStats,
+                    yearlyStats,
+                    recentSales,
+                    totalRevenue: totalRevenue[0]
+                }
+            }
+        };
+    } catch (error) {
+        console.error('Error fetching sales:', error);
+        throw new Error('Failed to fetch sales.');
+    }
+}
+
+
+async readAllDaily(userId: string) {
+  try {
+    const totalRevenue = await this.calculateTotalStockRevenue();
+    const totalPurchasedAmount = await this.getTotalPurchasedAmount();
+
+    // Define today's date range in UTC
+    const today = new Date();
+    const startOfDay = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0));
+    const endOfDay = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999));
+
+    // Get daily records
+    const dailyRecords = await this.model.find({
+      user: new Types.ObjectId(userId),
+      createdAt: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
+    }).lean();
+
+    // Calculate daily totals
+    const dailyTotals = dailyRecords.reduce((acc, record) => {
+      return {
+        totalQuantity: acc.totalQuantity + (record.quantity || 0),
+        totalRevenue: acc.totalRevenue + (record.unitPrice * record.quantity || 0),
+        totalPurchased: acc.totalPurchased + (record.totalPrice || 0)
+      };
+    }, { totalQuantity: 0, totalRevenue: 0, totalPurchased: 0 });
+
+    // Get daily expenses
+    const dailyExpenses = await Expense.aggregate([
       {
         $match: {
-          $or: [
-            { productName: { $regex: search, $options: 'i' } },
-            { buyerName: { $regex: search, $options: 'i' } },
-          ],
-        },
+          createdBy: new Types.ObjectId(userId),
+          status: 'ACTIVE',
+          createdAt: {
+            $gte: startOfDay,
+            $lte: endOfDay
+          }
+        }
       },
       {
         $group: {
           _id: null,
-          totalQuantitySold: { $sum: '$quantity' },
-          totalSaleAmount: { $sum: '$totalPrice' },
-          totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-          totalProductPrice: { $sum: '$productPrice' },
-          profit: { 
-            $sum: { 
-              $subtract: ['$SellingPrice', '$productPrice'] 
-            } 
-          },
-          totalMarginProfit: {
-            $sum: {
-              $multiply: [
-                '$quantity',
-                { $subtract: ['$SellingPrice', '$productPrice'] }
-              ]
-            }
-          },
+          totalAmount: { $sum: '$amount' }
         }
       }
     ]);
 
-    const data = await this.model.aggregate([
-      {
-        $match: {
-          $or: [
-            { productName: { $regex: search, $options: 'i' } },
-            { buyerName: { $regex: search, $options: 'i' } },
-          ],
-        },
-      },
-      ...sortAndPaginatePipeline(query),
-    ]);
+    const todayExpenses = dailyExpenses[0]?.totalAmount || 0;
 
-    const totalCount = await this.model.countDocuments({
-      $or: [
-        { productName: { $regex: search, $options: 'i' } },
-        { buyerName: { $regex: search, $options: 'i' } },
-      ],
-    });
-
-    const summary = soldProductsTotal[0] || {
-      totalQuantitySold: 0,
-      totalSaleAmount: 0,
-      totalSellingPrice: 0,
-      totalProductPrice: 0,
-      totalMarginProfit: 0,
-      profit: 0
+    // Format the response
+    const response = {
+      success: true,
+      data: {
+        dailyData: dailyRecords.map(record => ({
+          ...record,
+          id: record._id,
+          date: record.createdAt,
+          revenue: record.unitPrice * record.quantity,
+          purchased: record.totalPrice
+        })),
+        summary: {
+          totalRevenue: totalRevenue[0],
+          totalStock: totalRevenue[0]?.totalOverallStock || 0,
+          dailyRevenue: dailyTotals.totalRevenue,
+          dailyPurchased: dailyTotals.totalPurchased, // This is the total purchased amount for the day
+          dailyQuantitySold: dailyTotals.totalQuantity,
+          dailyExpenses: todayExpenses,
+          dailyGrossProfit: dailyTotals.totalRevenue - dailyTotals.totalPurchased,
+          dailyNetProfit: (dailyTotals.totalRevenue - dailyTotals.totalPurchased) - todayExpenses,
+          totalPurchasedAmount: totalPurchasedAmount,
+          totalExpenses: await this.calculateExpenses(userId),
+          transactions: dailyRecords
+        }
+      }
     };
 
-    return {
-      data,
-      totalCount,
-      totalRevenue: totalRevenue[0],
-      summary
-    };
+    return response;
+
+  } catch (error) {
+    console.error('Error in readAllDaily:', error);
+    throw new CustomError(500, 'Error fetching daily data');
+  }
 }
-
-async readAllDaily(userId: string) {
-  const totalRevenue = await this.calculateTotalStockRevenue();
-  const totalPurchasedAmount = await this.getTotalPurchasedAmount();
-
-  // Define today's date range
-  const today = new Date();
-  const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-  const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-
-  // First, get the expenses separately
-  const dailyExpenses = await Expense.aggregate([
-    {
-      $match: {
-        createdBy: new Types.ObjectId(userId),
-        status: 'ACTIVE',
-        date: {
-          $gte: startOfDay,
-          $lte: endOfDay
-        }
-      }
-    },
-    {
-      $group: {
-        _id: null,
-        totalAmount: { $sum: '$amount' }
-      }
-    }
-  ]);
-
-  const dailyData = await this.model.aggregate([
-    {
-      $match: {
-        user: new Types.ObjectId(userId),
-        date: {
-          $gte: startOfDay,
-          $lte: endOfDay
-        }
-      }
-    },
-    {
-      $group: {
-        _id: {
-          day: { $dayOfMonth: '$date' },
-          month: { $month: '$date' },
-          year: { $year: '$date' }
-        },
-        totalQuantity: { $sum: '$quantity' },
-        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-        totalProductPrice: { $sum: '$productPrice' },
-        totalPurchasedAmount: { $sum: '$totalPrice' },
-        stockValue: {
-          $sum: {
-            $multiply: ['$productPrice', { $subtract: ['$quantity', 0] }]
-          }
-        }
-      }
-    }
-  ]);
-
-  const todayExpenses = dailyExpenses[0]?.totalAmount || 0;
-  const todaySummary = dailyData[0] || {
-    totalSellingPrice: 0,
-    totalPurchasedAmount: 0,
-    totalQuantity: 0,
-    grossProfit: 0
-  };
-
-  return {
-    dailyData,
-    summary: {
-      totalRevenue: totalRevenue[0],
-      totalStock: totalRevenue[0]?.totalOverallStock || 0,
-      dailyRevenue: todaySummary.totalSellingPrice,
-      dailyPurchased: todaySummary.totalPurchasedAmount,
-      dailyQuantitySold: todaySummary.totalQuantity,
-      dailyExpenses: todayExpenses,
-      dailyGrossProfit: todaySummary.totalSellingPrice - todaySummary.totalPurchasedAmount,
-      dailyNetProfit: (todaySummary.totalSellingPrice - todaySummary.totalPurchasedAmount) - todayExpenses,
-      totalPurchasedAmount,
-      totalExpenses: await this.calculateExpenses(userId),
-      netProfit: dailyData.reduce((sum: number, day: any) => {
-        const dayGrossProfit = day.totalSellingPrice - day.totalPurchasedAmount;
-        return sum + (dayGrossProfit - todayExpenses);
-      }, 0)
-    }
-  };
-}
-
-
-
-
 
 async readAllMonthly(userId: string) {
   const totalRevenue = await this.calculateTotalStockRevenue();
@@ -270,7 +378,7 @@ async readAllMonthly(userId: string) {
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
 
-  // Get monthly expenses separately
+  // Get monthly expenses
   const monthlyExpenses = await Expense.aggregate([
     {
       $match: {
@@ -290,6 +398,7 @@ async readAllMonthly(userId: string) {
     }
   ]);
 
+  // Modified monthly sales aggregation
   const monthlyData = await this.model.aggregate([
     {
       $match: {
@@ -308,8 +417,8 @@ async readAllMonthly(userId: string) {
         },
         totalQuantity: { $sum: '$quantity' },
         totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-        totalProductPrice: { $sum: '$productPrice' },
-        totalPurchasedAmount: { $sum: '$totalPrice' }
+        totalProductPrice: { $sum: { $multiply: ['$productPrice', '$quantity'] } },
+        monthlyPurchasedAmount: { $sum: { $multiply: ['$productPrice', '$quantity'] } }
       }
     }
   ]);
@@ -317,7 +426,7 @@ async readAllMonthly(userId: string) {
   const thisMonthExpenses = monthlyExpenses[0]?.totalAmount || 0;
   const thisMonthSummary = monthlyData[0] || {
     totalSellingPrice: 0,
-    totalPurchasedAmount: 0,
+    monthlyPurchasedAmount: 0,
     totalQuantity: 0
   };
 
@@ -327,21 +436,20 @@ async readAllMonthly(userId: string) {
       totalRevenue: totalRevenue[0],
       totalStock: totalRevenue[0]?.totalOverallStock || 0,
       monthlyRevenue: thisMonthSummary.totalSellingPrice,
-      monthlyPurchased: thisMonthSummary.totalPurchasedAmount,
+      monthlyPurchased: thisMonthSummary.monthlyPurchasedAmount,
       monthlyQuantitySold: thisMonthSummary.totalQuantity,
-      monthlyExpenses: thisMonthExpenses,
-      monthlyGrossProfit: thisMonthSummary.totalSellingPrice - thisMonthSummary.totalPurchasedAmount,
-      monthlyNetProfit: (thisMonthSummary.totalSellingPrice - thisMonthSummary.totalPurchasedAmount) - thisMonthExpenses,
+      monthlyExpenses: thisMonthExpenses, 
+      monthlyGrossProfit: thisMonthSummary.totalSellingPrice - thisMonthSummary.monthlyPurchasedAmount,
+      monthlyNetProfit: (thisMonthSummary.totalSellingPrice - thisMonthSummary.monthlyPurchasedAmount) - thisMonthExpenses,
       totalPurchasedAmount,
       totalExpenses: await this.calculateExpenses(userId),
       netProfit: monthlyData.reduce((sum, month) => {
-        const monthGrossProfit = month.totalSellingPrice - month.totalPurchasedAmount;
+        const monthGrossProfit = month.totalSellingPrice - month.monthlyPurchasedAmount;
         return sum + (monthGrossProfit - thisMonthExpenses);
       }, 0)
     }
   };
 }
-
   async readAllWeekly(userId: string) {
     const totalExpenses = await this.calculateExpenses(userId);
     const totalRevenue = await this.calculateTotalStockRevenue();

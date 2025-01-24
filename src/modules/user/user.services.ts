@@ -29,6 +29,14 @@ class UserServices {
 
   // Register new user
   async createUser(payload: IUser) {
+    
+    const userExist = await this.model.findOne({ email: payload.email });
+  
+    if (userExist) {
+      throw new Error('User already exists with this email');
+    }
+  
+    // Create the user if it doesn't exist
     const user = await this.model.create(payload);
     return user;
   }
