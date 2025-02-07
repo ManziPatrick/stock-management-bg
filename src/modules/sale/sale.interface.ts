@@ -10,6 +10,7 @@ export interface ISale {
   buyerName: string;
   date: Date;
   totalPrice: number;
+  paymentMode: 'cash' | 'momo' | 'cheque' | 'transfer';
 }
 
 export interface ProfitCalculationQuery {

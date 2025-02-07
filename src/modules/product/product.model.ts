@@ -76,11 +76,11 @@ const productSchema = new Schema<IProduct>(
       trim: true 
     },
     images: {
-      type: [String], // Array of image URLs
+      type: [String], 
       required: [true, 'At least one product image is required'],
       validate: {
         validator: function(v: string[]) {
-          return v.length > 0 && v.length <= 5; // Ensure 1-5 images
+          return v.length > 0 && v.length <= 5; 
         },
         message: 'Product must have between 1 and 5 images'
       }
@@ -103,5 +103,6 @@ productSchema.index({ price: 1 });
 // Add a compound index for category and price for filtered searches
 productSchema.index({ category: 1, price: 1 });
 
-const Product = model<IProduct>('product', productSchema);
+// Prevent re-compilation of the model
+const Product = model<IProduct>('Product', productSchema);
 export default Product;

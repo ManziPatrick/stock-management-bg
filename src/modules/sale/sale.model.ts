@@ -11,6 +11,7 @@ const saleSchema = new Schema<ISale>(
     totalPrice: { type: Number, required: true },
     productPrice: { type: Number, required: true },
     SellingPrice: { type: Number, required: true },
+    paymentMode: { type: String, required: true, enum: ['cash', 'momo', 'cheque', 'transfer'] },
     date: { type: Date, required: true }
   },
   { timestamps: true }

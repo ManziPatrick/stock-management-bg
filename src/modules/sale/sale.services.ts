@@ -29,8 +29,39 @@ class SaleServices extends BaseServices<any> {
           _id: null,
           sizeWiseRevenue: { $push: '$$ROOT' },
           totalOverallRevenue: { $sum: '$totalRevenue' },
-          totalOverallStock: { $sum: '$totalStock' },
-          
+          totalOverallStock: { $sum: '$totalStock' }
+        }
+      }
+    ]);
+  }
+
+  async calculatePaymentStats(matchStage: any = {}) {
+    return await this.model.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: null,
+          cashTotal: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalPrice', 0]
+            }
+          },
+          momoTotal: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalPrice', 0]
+            }
+          },
+          chequeTotal: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalPrice', 0]
+            }
+          },
+          transferTotal: {
+            $sum: {
+              $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalPrice', 0]
+            }
+          },
+          totalAmount: { $sum: '$totalPrice' }
         }
       }
     ]);
@@ -69,13 +100,87 @@ class SaleServices extends BaseServices<any> {
       // Calculate total revenue after sale
       const totalRevenue = await this.calculateTotalStockRevenue();
       
+      // Calculate daily payment stats
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const dailyPaymentStats = await this.calculatePaymentStats({
+        createdAt: {
+          $gte: today,
+          $lt: tomorrow
+        }
+      });
+
+      // Calculate monthly payment stats
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      
+      const monthlyPaymentStats = await this.calculatePaymentStats({
+        createdAt: {
+          $gte: startOfMonth,
+          $lte: endOfMonth
+        }
+      });
+
+      // Calculate all-time payment stats
+      const allTimePaymentStats = await this.calculatePaymentStats({});
+
+      // Get recent sales with payment info
+      const recentSales = await this.model.aggregate([
+        { $sort: { createdAt: -1 } },
+        { $limit: 5 },
+        {
+          $project: {
+            _id: 1,
+            productName: 1,
+            buyerName: 1,
+            quantity: 1,
+            totalPrice: 1,
+            paymentMode: 1,
+            createdAt: 1,
+            profit: { 
+              $multiply: [
+                '$quantity',
+                { $subtract: ['$SellingPrice', '$productPrice'] }
+              ]
+            }
+          }
+        }
+      ]);
+      
       return {
         sale: result,
-        totalRevenue: totalRevenue[0]
+        totalRevenue: totalRevenue[0],
+        paymentStats: {
+          daily: dailyPaymentStats[0] || {
+            cashTotal: 0,
+            momoTotal: 0,
+            chequeTotal: 0,
+            transferTotal: 0,
+            totalAmount: 0
+          },
+          monthly: monthlyPaymentStats[0] || {
+            cashTotal: 0,
+            momoTotal: 0,
+            chequeTotal: 0,
+            transferTotal: 0,
+            totalAmount: 0
+          },
+          allTime: allTimePaymentStats[0] || {
+            cashTotal: 0,
+            momoTotal: 0,
+            chequeTotal: 0,
+            transferTotal: 0,
+            totalAmount: 0
+          }
+        },
+        recentSales
       };
     } catch (error: any) {
       console.error('Sale creation error:', error);
-      throw new CustomError(400, 'Sale creation failed');
+      throw new CustomError(400, error.message || 'Sale creation failed');
     }
   }
 
@@ -94,194 +199,274 @@ class SaleServices extends BaseServices<any> {
 
     return totalExpenses[0]?.total || 0;
   }
+
   async readAll(query: Record<string, unknown> = {}) {
     const search = query.search ? (query.search as string) : '';
     const page = query.page ? Number(query.page) : 1;
     const limit = query.limit ? Number(query.limit) : 10;
 
     const matchStage = {
-        $match: {
-            $or: [
-                { productName: { $regex: search, $options: 'i' } },
-                { buyerName: { $regex: search, $options: 'i' } },
-            ],
-        },
+      $match: {
+        $or: [
+          { productName: { $regex: search, $options: 'i' } },
+          { buyerName: { $regex: search, $options: 'i' } },
+        ],
+      },
     };
 
     try {
-        // Calculate overall statistics
-        const [stats] = await this.model.aggregate([
-            matchStage,
-            {
-                $group: {
-                    _id: null,
-                    totalQuantitySold: { $sum: '$quantity' },
-                    totalSaleAmount: { $sum: '$totalPrice' },
-                    totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                    totalProductPrice: { $sum: '$productPrice' },
-                    profit: { 
-                        $sum: { 
-                            $subtract: ['$SellingPrice', '$productPrice'] 
-                        } 
-                    },
-                    totalMarginProfit: {
-                        $sum: {
-                            $multiply: [
-                                '$quantity',
-                                { $subtract: ['$SellingPrice', '$productPrice'] }
-                            ]
-                        }
-                    },
-                    averageSaleAmount: { $avg: '$totalPrice' },
-                    totalCount: { $sum: 1 }
-                }
-            }
-        ]);
-
-        // Get daily statistics
-        const dailyStats = await this.model.aggregate([
-            matchStage,
-            {
-                $group: {
-                    _id: {
-                        year: { $year: '$createdAt' },
-                        month: { $month: '$createdAt' },
-                        day: { $dayOfMonth: '$createdAt' }
-                    },
-                    dailyTotal: { $sum: '$totalPrice' },
-                    dailyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                    quantity: { $sum: '$quantity' },
-                    profit: {
-                        $sum: {
-                            $multiply: [
-                                '$quantity',
-                                { $subtract: ['$SellingPrice', '$productPrice'] }
-                            ]
-                        }
-                    },
-                    count: { $sum: 1 }
-                }
+      // Calculate overall statistics
+      const [stats] = await this.model.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: null,
+            totalQuantitySold: { $sum: '$quantity' },
+            totalSaleAmount: { $sum: '$totalPrice' },
+            totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+            totalProductPrice: { $sum: '$productPrice' },
+            profit: {
+              $sum: {
+                $subtract: ['$SellingPrice', '$productPrice']
+              }
             },
-            { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
-        ]);
-
-        // Get monthly statistics
-        const monthlyStats = await this.model.aggregate([
-            matchStage,
-            {
-                $group: {
-                    _id: {
-                        year: { $year: '$createdAt' },
-                        month: { $month: '$createdAt' }
-                    },
-                    monthlyTotal: { $sum: '$totalPrice' },
-                    monthlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                    quantity: { $sum: '$quantity' },
-                    profit: {
-                        $sum: {
-                            $multiply: [
-                                '$quantity',
-                                { $subtract: ['$SellingPrice', '$productPrice'] }
-                            ]
-                        }
-                    },
-                    count: { $sum: 1 }
-                }
+            totalMarginProfit: {
+              $sum: {
+                $multiply: [
+                  '$quantity',
+                  { $subtract: ['$SellingPrice', '$productPrice'] }
+                ]
+              }
             },
-            { $sort: { '_id.year': -1, '_id.month': -1 } }
-        ]);
-
-        // Get yearly statistics
-        const yearlyStats = await this.model.aggregate([
-            matchStage,
-            {
-                $group: {
-                    _id: {
-                        year: { $year: '$createdAt' }
-                    },
-                    yearlyTotal: { $sum: '$totalPrice' },
-                    yearlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                    quantity: { $sum: '$quantity' },
-                    profit: {
-                        $sum: {
-                            $multiply: [
-                                '$quantity',
-                                { $subtract: ['$SellingPrice', '$productPrice'] }
-                            ]
-                        }
-                    },
-                    count: { $sum: 1 }
-                }
+            averageSaleAmount: { $avg: '$totalPrice' },
+            totalCount: { $sum: 1 },
+            cashTotal: {
+              $sum: {
+                $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalPrice', 0]
+              }
             },
-            { $sort: { '_id.year': -1 } }
-        ]);
-
-        // Get recent sales
-        const recentSales = await this.model.aggregate([
-            matchStage,
-            { $sort: { createdAt: -1 } },
-            { $limit: 5 },
-            {
-                $project: {
-                    _id: 1,
-                    productName: 1,
-                    buyerName: 1,
-                    quantity: 1,
-                    totalPrice: 1,
-                    createdAt: 1,
-                    profit: { 
-                        $multiply: [
-                            '$quantity',
-                            { $subtract: ['$SellingPrice', '$productPrice'] }
-                        ]
-                    }
-                }
+            momoTotal: {
+              $sum: {
+                $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalPrice', 0]
+              }
+            },
+            chequeTotal: {
+              $sum: {
+                $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalPrice', 0]
+              }
+            },
+            transferTotal: {
+              $sum: {
+                $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalPrice', 0]
+              }
             }
-        ]);
+          }
+        }
+      ]);
 
-        // Get paginated data
-        const data = await this.model.aggregate([
-            matchStage,
-            ...sortAndPaginatePipeline(query),
-        ]);
+      // Get payment mode statistics by time period
+      const paymentStats = await this.model.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' },
+              day: { $dayOfMonth: '$createdAt' },
+              paymentMode: '$paymentMode'
+            },
+            total: { $sum: '$totalPrice' },
+            count: { $sum: 1 }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: '$_id.year',
+              month: '$_id.month',
+              day: '$_id.day'
+            },
+            payments: {
+              $push: {
+                mode: '$_id.paymentMode',
+                total: '$total',
+                count: '$count'
+              }
+            },
+            dailyTotal: { $sum: '$total' }
+          }
+        },
+        { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+      ]);
 
-        const totalCount = await this.model.countDocuments(matchStage.$match);
-        const totalRevenue = await this.calculateTotalStockRevenue();
+      // Get daily statistics
+      const dailyStats = await this.model.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' },
+              day: { $dayOfMonth: '$createdAt' }
+            },
+            dailyTotal: { $sum: '$totalPrice' },
+            dailyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+            quantity: { $sum: '$quantity' },
+            profit: {
+              $sum: {
+                $multiply: [
+                  '$quantity',
+                  { $subtract: ['$SellingPrice', '$productPrice'] }
+                ]
+              }
+            },
+            paymentModes: {
+              $push: {
+                mode: '$paymentMode',
+                amount: '$totalPrice'
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+      ]);
 
-        return {
-            statusCode: 200,
-            success: true,
-            message: "Sales retrieved successfully!",
-            data,
-            meta: {
-                page,
-                limit,
-                total: totalCount,
-                totalPage: Math.ceil(totalCount / limit),
-                totalSales: {
-                    stats: stats || {
-                        totalQuantitySold: 0,
-                        totalSaleAmount: 0,
-                        totalSellingPrice: 0,
-                        totalProductPrice: 0,
-                        totalMarginProfit: 0,
-                        profit: 0,
-                        averageSaleAmount: 0,
-                        totalCount: 0
-                    },
-                    dailyStats,
-                    monthlyStats,
-                    yearlyStats,
-                    recentSales,
-                    totalRevenue: totalRevenue[0]
-                }
+      // Get monthly statistics
+      const monthlyStats = await this.model.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            monthlyTotal: { $sum: '$totalPrice' },
+            monthlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+            quantity: { $sum: '$quantity' },
+            profit: {
+              $sum: {
+                $multiply: [
+                  '$quantity',
+                  { $subtract: ['$SellingPrice', '$productPrice'] }
+                ]
+              }
+            },
+            paymentModes: {
+              $push: {
+                mode: '$paymentMode',
+                amount: '$totalPrice'
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': -1, '_id.month': -1 } }
+      ]);
+
+      // Get yearly statistics
+      const yearlyStats = await this.model.aggregate([
+        matchStage,
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' }
+            },
+            yearlyTotal: { $sum: '$totalPrice' },
+            yearlyTotalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
+            quantity: { $sum: '$quantity' },
+            profit: {
+              $sum: {
+                $multiply: [
+                  '$quantity',
+                  { $subtract: ['$SellingPrice', '$productPrice'] }
+                ]
+              }
+            },
+            paymentModes: {
+              $push: {
+                mode: '$paymentMode',
+                amount: '$totalPrice'
+              }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': -1 } }
+      ]);
+
+      // Get recent sales
+      const recentSales = await this.model.aggregate([
+        matchStage,
+        { $sort: { createdAt: -1 } },
+        { $limit: 5 },
+        {
+          $project: {
+            _id: 1,
+            productName: 1,
+            buyerName: 1,
+            quantity: 1,
+            totalPrice: 1,
+            paymentMode: 1,
+            createdAt: 1,
+            profit: {
+              $multiply: [
+                '$quantity',
+                { $subtract: ['$SellingPrice', '$productPrice'] }
+              ]
             }
-        };
+          }
+        }
+      ]);
+
+      const data = await this.model.aggregate([
+        matchStage,
+        ...sortAndPaginatePipeline(query),
+      ]);
+
+      const totalCount = await this.model.countDocuments(matchStage.$match);
+      const totalRevenue = await this.calculateTotalStockRevenue();
+
+      return {
+        statusCode: 200,
+        success: true,
+        message: "Sales retrieved successfully!",
+        data,
+        meta: {
+          page,
+          limit,
+          total: totalCount,
+          totalPage: Math.ceil(totalCount / limit),
+          totalSales: {
+            stats: stats || {
+              totalQuantitySold: 0,
+              totalSaleAmount: 0,
+              totalSellingPrice: 0,
+              totalProductPrice: 0,
+              totalMarginProfit: 0,
+              profit: 0,
+              averageSaleAmount: 0,
+              totalCount: 0,
+              cashTotal: 0,
+              momoTotal: 0,
+              chequeTotal: 0,
+              transferTotal: 0
+            },
+            paymentStats,
+            dailyStats,
+            monthlyStats,
+            yearlyStats,
+            recentSales,
+            totalRevenue: totalRevenue[0]
+          }
+        }
+      };
     } catch (error) {
-        console.error('Error fetching sales:', error);
-        throw new Error('Failed to fetch sales.');
+      console.error('Error fetching sales:', error);
+      throw new Error('Failed to fetch sales.');
     }
-}
+  }
+
 
 
 async readAllDaily(userId: string) {
