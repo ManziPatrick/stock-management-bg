@@ -11,5 +11,5 @@ export interface Credit {
     creditAmount: number;
     customerDetails: CustomerDetails;
     paymentDueDate: string;
-    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    status: 'PENDING' | 'COMPLETED' | 'REJECTED';
 }

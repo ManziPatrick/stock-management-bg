@@ -1,50 +1,55 @@
 import { Request, Response } from 'express';
-import { CreditService, CreateCreditDto, UpdateCreditDto } from './credit.service';
+import { CreditService } from './credit.service';
+import { catchAsync } from '../utils/catchAsync';
 
-class CreditController {
-    private creditService: CreditService;
+const creditService = new CreditService();
 
-    constructor() {
-        this.creditService = new CreditService();
-    }
+export class CreditController {
+  createCredit = catchAsync(async (req: Request, res: Response) => {
+    const credit = await creditService.createCredit(req.body);
+    res.status(201).json({
+      status: 'success',
+      data: credit,
+    });
+  });
 
-    findAll(req: Request, res: Response): void {
-        const credits = this.creditService.findAll();
-        res.status(200).json(credits);
-    }
+  getAllCredits = catchAsync(async (req: Request, res: Response) => {
+    const result = await creditService.getAllCredits(req.query);
+    res.status(200).json({
+      status: 'success',
+      ...result,
+    });
+  });
 
-    findOne(req: Request, res: Response): void {
-        const { id } = req.params;
-        const credit = this.creditService.findOne(id);
-        if (credit) {
-            res.status(200).json(credit);
-        } else {
-            res.status(404).json({ message: 'Credit not found' });
-        }
-    }
+  getCreditById = catchAsync(async (req: Request, res: Response) => {
+    const credit = await creditService.getCreditById(req.params.id);
+    res.status(200).json({
+      status: 'success',
+      data: credit,
+    });
+  });
 
-    create(req: Request, res: Response): void {
-        const createCreditDto: CreateCreditDto = req.body;
-        const newCredit = this.creditService.create(createCreditDto);
-        res.status(201).json(newCredit);
-    }
+  updateCredit = catchAsync(async (req: Request, res: Response) => {
+    const credit = await creditService.updateCredit(req.params.id, req.body);
+    res.status(200).json({
+      status: 'success',
+      data: credit,
+    });
+  });
 
-    update(req: Request, res: Response): void {
-        const { id } = req.params;
-        const updateCreditDto: UpdateCreditDto = req.body;
-        const updatedCredit = this.creditService.update(id, updateCreditDto);
-        if (updatedCredit) {
-            res.status(200).json(updatedCredit);
-        } else {
-            res.status(404).json({ message: 'Credit not found' });
-        }
-    }
+  deleteCredit = catchAsync(async (req: Request, res: Response) => {
+    await creditService.deleteCredit(req.params.id);
+    res.status(204).json({
+      status: 'success',
+      data: null,
+    });
+  });
 
-    remove(req: Request, res: Response): void {
-        const { id } = req.params;
-        this.creditService.remove(id);
-        res.status(204).send();
-    }
+  getCreditSummary = catchAsync(async (req: Request, res: Response) => {
+    const summary = await creditService.getCreditSummary();
+    res.status(200).json({
+      status: 'success',
+      data: summary,
+    });
+  });
 }
-
-export { CreditController };

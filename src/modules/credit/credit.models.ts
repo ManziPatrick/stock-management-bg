@@ -13,7 +13,7 @@ interface Credit extends Document {
     creditAmount: number;
     customerDetails: CustomerDetails;
     paymentDueDate: string;
-    status: 'PENDING' | 'APPROVED' | 'REJECTED';
+    status: 'PENDING' | 'COMPLETED' | 'REJECTED';
 }
 
 const CustomerDetailsSchema = new Schema<CustomerDetails>({
@@ -29,7 +29,7 @@ const CreditSchema = new Schema<Credit>({
     creditAmount: { type: Number, required: true },
     customerDetails: { type: CustomerDetailsSchema, required: true },
     paymentDueDate: { type: String, required: true },
-    status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], required: true }
+    status: { type: String, enum: ['PENDING', 'COMPLETED', 'REJECTED'], required: true }
 });
 
 const CreditModel = model<Credit>('Credit', CreditSchema);

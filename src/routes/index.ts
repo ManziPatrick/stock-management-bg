@@ -9,7 +9,7 @@ import purchaseRoutes from '../modules/purchase/purchase.routes';
 import expenseRouter from '../modules/expenses/expenseRoutes';
 import { debitRoutes } from '../modules/debits/debits.routes';
 import Proforma from '../modules/Proforma/proforma.route';
-import Credit from '../modules/credit/credit.routes'
+import {creditRoutes} from '../modules/credit/credit.routes'
 
 const rootRouter = Router();
 
@@ -23,5 +23,5 @@ rootRouter.use('/expenses',expenseRouter);
 rootRouter.use('/proforma',Proforma);
 rootRouter.use('/debits', debitRoutes);
 rootRouter.use('/purchases', purchaseRoutes);
-rootRouter.use('/credits', Credit);
+rootRouter.use('/credits', creditRoutes);
 export default rootRouter;
