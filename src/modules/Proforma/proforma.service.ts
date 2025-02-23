@@ -14,70 +14,67 @@ interface ProformaQueryParams {
 }
 
 export class ProformaService {
-  private generateInvoiceNumber(): string {
-    return `INV${new Date().getFullYear()}${(new Date().getMonth() + 1)
-      .toString()
-      .padStart(2, '0')}-${uuidv4().slice(0, 8).toUpperCase()}`;
-  }
-
-  async createProforma(proformaData: Partial<IProforma>): Promise<IProforma> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      // Generate the invoice number first
-      const invoiceNo = this.generateInvoiceNumber();
-      console.log('invoiceNo', invoiceNo);
-      
-      // Use provided dates or generate new ones
-      const issueDate = proformaData.date || new Date();
-      const paymentDays = proformaData.terms?.paymentDays || 30;
-      const dueDate = proformaData.dueDate || new Date(issueDate.getTime() + (paymentDays * 24 * 60 * 60 * 1000));
-
-      // Prepare proforma data with guaranteed invoice number
-      const preparedData = {
-        ...proformaData,
-        date: issueDate,
-        dueDate: dueDate,
-        invoiceNumber: invoiceNo,
-        invoiceDetails: {
-          invoiceNo: invoiceNo,
-          invoiceDate: issueDate,
-          dueDate: dueDate
-        },
-        terms: {
-          paymentDays: paymentDays,
-          lateFeePercentage: proformaData.terms?.lateFeePercentage || 5
-        }
-      };
-
-      // Validate and update product stock
-      if (preparedData.items && preparedData.items.length > 0) {
-        for (const item of preparedData.items) {
-          const product = await Product.findById(item.product).session(session);
-          if (!product) {
-            throw new Error(`Product ${item.product} not found`);
-          }
-          if (product.stock < item.quantity) {
-            throw new Error(`Insufficient stock for product ${product.name}`);
-          }
-          // Update product stock
-          product.stock -= item.quantity;
-          await product.save({ session });
-        }
-      }
-
-      const proforma = new Proforma(preparedData);
-      await proforma.save({ session });
-      await session.commitTransaction();
-      return proforma;
-    } catch (error) {
-      await session.abortTransaction();
-      throw error;
-    } finally {
-      session.endSession();
+ 
+    private generateInvoiceNumber(): string {
+      return `INV${new Date().getFullYear()}${(new Date().getMonth() + 1)
+        .toString()
+        .padStart(2, '0')}-${uuidv4().slice(0, 8).toUpperCase()}`;
     }
-  }
+  
+    async createProforma(proformaData: Partial<IProforma>): Promise<IProforma> {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+  
+      try {
+        const invoiceNo = this.generateInvoiceNumber();
+        console.log('invoiceNo', invoiceNo);
+  
+        const issueDate = proformaData.date || new Date();
+        const paymentDays = proformaData.terms?.paymentDays || 30;
+        const dueDate = proformaData.dueDate || new Date(issueDate.getTime() + (paymentDays * 24 * 60 * 60 * 1000));
+  
+        const preparedData = {
+          ...proformaData,
+          date: issueDate,
+          dueDate: dueDate,
+          invoiceNumber: invoiceNo,
+          invoiceDetails: {
+            invoiceNo: invoiceNo,
+            invoiceDate: issueDate,
+            dueDate: dueDate
+          },
+          terms: {
+            paymentDays: paymentDays,
+            lateFeePercentage: proformaData.terms?.lateFeePercentage || 5
+          }
+        };
+  
+        // Validate product stock but do NOT reduce quantity
+        if (preparedData.items && preparedData.items.length > 0) {
+          for (const item of preparedData.items) {
+            const product = await Product.findById(item.product).session(session);
+            if (!product) {
+              throw new Error(`Product ${item.product} not found`);
+            }
+            if (product.stock < item.quantity) {
+              throw new Error(`Insufficient stock for product ${product.name}`);
+            }
+          }
+        }
+  
+        const proforma = new Proforma(preparedData);
+        await proforma.save({ session });
+        await session.commitTransaction();
+        return proforma;
+      } catch (error) {
+        await session.abortTransaction();
+        throw error;
+      } finally {
+        session.endSession();
+      }
+    }
+  
+  
 
   async getAllProformas(queryParams: ProformaQueryParams) {
     const { page = 1, limit = 10, status, search, startDate, endDate } = queryParams;

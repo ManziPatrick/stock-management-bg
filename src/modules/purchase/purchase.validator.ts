@@ -10,6 +10,7 @@ const createSchema = z.object({
   paid: z.number().optional()
 });
 
+
 const updateSchema = z.object({
   seller: z.string().optional(),
   product: z.string().optional(),

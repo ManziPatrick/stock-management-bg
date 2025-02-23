@@ -1,5 +1,6 @@
 import { Schema, model } from 'mongoose';
 import { IMeasurement, IProduct } from './product.interface';
+import { boolean } from 'zod';
 
 const measurementSchema = new Schema<IMeasurement>({
   type: { 

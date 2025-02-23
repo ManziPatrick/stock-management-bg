@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { config } from 'dotenv';
 
-config(); // Load environment variables
+config(); 
 
 async function fixInvoiceIndexes() {
   try {

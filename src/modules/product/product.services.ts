@@ -11,7 +11,7 @@ import { IProduct, IMeasurement } from './product.interface';
 interface StockUpdate {
   seller: string;
   stock: number;
-  minStockAlert?: number; // Add this to allow custom minimum stock levels
+  minStockAlert?: number; 
 }
 
 interface ProductCreateResponse {
@@ -276,45 +276,6 @@ class ProductServices extends BaseServices<any> {
       session.endSession();
     }
   }
-
-  async update(id: string, payload: Partial<IProduct>) {
-    try {
-      if (payload.measurement) {
-        if (!this.validateMeasurement(payload.measurement)) {
-          throw new CustomError(400, 'Invalid measurement data');
-        }
-      }
-
-      const updatedProduct = await this.model.findByIdAndUpdate(
-        id,
-        {
-          ...payload,
-          ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
-          ...(payload.category && { category: new Types.ObjectId(payload.category) }),
-          ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
-        },
-        { new: true }
-      ).populate([
-        { path: 'category', select: '-__v -user' },
-        { path: 'brand', select: '-__v -user' },
-        { path: 'seller', select: '-__v -user -createdAt -updatedAt' }
-      ]);
-
-      if (!updatedProduct) {
-        throw new CustomError(404, 'Product not found');
-      }
-
-      // Send notification for product update
-      await this.sendProductNotification(updatedProduct, 'Updated');
-      await this.checkAndNotifyStock(updatedProduct);
-
-      return updatedProduct;
-    } catch (error) {
-      if (error instanceof CustomError) throw error;
-      throw new CustomError(400, 'Product update failed');
-    }
-  }
-
   async addToStock(id: string, payload: StockUpdate, userId: string) {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -334,44 +295,141 @@ class ProductServices extends BaseServices<any> {
         throw new CustomError(400, 'Stock quantity must be greater than 0');
       }
   
+      // Update product stock
       const updatedProduct = await this.model.findByIdAndUpdate(
         id,
         { $inc: { stock: payload.stock } },
         { new: true, session }
       );
   
-      await Purchase.create(
-        [{
-          user: userId,
-          seller: product.seller,
-          product: product._id,
-          sellerName: seller.name,
-          productName: product.name,
-          quantity: payload.stock,
-          unitPrice: product.price,
-          totalPrice: payload.stock * product.price,
-          measurement: product.measurement,
-        }],
-        { session }
-      );
+      // Create new purchase record
+      const purchaseData = {
+        user: userId,
+        seller: product.seller,
+        product: product._id,
+        sellerName: seller.name,
+        productName: product.name,
+        quantity: payload.stock,
+        unitPrice: product.price,
+        totalPrice: payload.stock * product.price,
+        measurement: product.measurement,
+        stockAddition: true // Flag to identify stock additions
+      };
+  
+      await Purchase.create([purchaseData], { session });
   
       await session.commitTransaction();
-      session.endSession();
-
-      // Send notification for stock update
       await this.sendProductNotification(updatedProduct, 'Stock Updated', 
         `Stock increased by ${payload.stock} units`);
       await this.checkAndNotifyStock(updatedProduct, payload.minStockAlert);
   
-      return updatedProduct;
+      return {
+        success: true,
+        message: 'Stock added successfully',
+        data: updatedProduct
+      };
     } catch (error) {
       await session.abortTransaction();
-      session.endSession();
-  
       if (error instanceof CustomError) throw error;
       throw new CustomError(400, 'Add to stock failed');
+    } finally {
+      session.endSession();
     }
   }
+
+  async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean }) {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+        if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+            throw new CustomError(400, 'Invalid measurement data');
+        }
+
+        console.log("🚀 Updating product:", id);
+        console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
+        console.log("📦 Payload received:", payload);
+
+        const updatedProduct = await this.model.findByIdAndUpdate(
+            id,
+            {
+                ...payload,
+                ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
+                ...(payload.category && { category: new Types.ObjectId(payload.category) }),
+                ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
+            },
+            { new: true, session }
+        ).populate(['category', 'brand', 'seller']);
+
+        if (!updatedProduct) {
+            throw new CustomError(404, 'Product not found');
+        }
+
+        console.log("✅ Product updated successfully:", updatedProduct);
+
+        // ✅ Optimize Purchase Updates
+        if (options?.updatePurchases) {
+            console.log("📢 Updating purchase records...");
+
+            const purchases = await Purchase.find({ 
+                product: id,
+                stockAddition: { $ne: true } 
+            }).session(session);
+
+            console.log("🛒 Purchases found:", purchases.length);
+
+            if (purchases.length > 0) {
+                const purchaseUpdates = purchases.map(async (purchase) => {
+                    const updates: any = {};
+
+                    // Update price only if it has changed
+                    if (payload.price && payload.price !== purchase.unitPrice) {
+                        updates.unitPrice = payload.price;
+                        updates.totalPrice = payload.price * purchase.quantity;
+                    }
+
+                    // Update measurement only if it has changed
+                    if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
+                        updates.measurement = payload.measurement;
+                    }
+
+                    if (Object.keys(updates).length > 0) {
+                        console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
+                        return Purchase.findByIdAndUpdate(purchase._id, updates, { session });
+                    } else {
+                        console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
+                        return null;
+                    }
+                });
+
+                await Promise.all(purchaseUpdates); 
+            } else {
+                console.log("⚠️ No purchases found for this product. Skipping purchase update.");
+            }
+        } else {
+            console.log("⚠️ Purchases not updated. Conditions not met.");
+        }
+
+        await session.commitTransaction();
+        await this.sendProductNotification(updatedProduct, 'Updated');
+        await this.checkAndNotifyStock(updatedProduct);
+
+        return {
+            success: true,
+            statusCode: 200,
+            message: 'Product updated successfully',
+            data: updatedProduct
+        };
+    } catch (error) {
+        await session.abortTransaction();
+        console.error("❌ Error updating product:", error);
+        if (error instanceof CustomError) throw error;
+        throw new CustomError(400, 'Product update failed');
+    } finally {
+        session.endSession();
+    }
+}
+
 
   async delete(id: string) {
     try {

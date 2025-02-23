@@ -16,6 +16,7 @@ export interface IProduct {
   price: number;
   stock: number;
   description?: string;
+  updatePurchases?: boolean;
   images: string[];
   createdAt?: Date;
   updatedAt?: Date;

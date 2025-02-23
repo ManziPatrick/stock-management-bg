@@ -1,50 +1,19 @@
-// src/services/credit.service.ts
 import { CreditModel, Credit } from './credit.models';
 import { AppError } from '../utils/appError';
-
-interface CreditQueryParams {
-  page?: number;
-  limit?: number;
-  status?: string;
-  search?: string;
-  startDate?: string;
-  endDate?: string;
-}
-
-interface CreateCreditDto {
-  productId: string;
-  totalAmount: number;
-  downPayment: number;
-  creditAmount: number;
-  customerDetails: {
-    name: string;
-    phone: string;
-    email: string;
-  };
-  paymentDueDate: string;
-  status: 'PENDING' | 'COMPLETED' | 'REJECTED';
-}
-
-interface UpdateCreditDto {
-  productId?: string;
-  totalAmount?: number;
-  downPayment?: number;
-  creditAmount?: number;
-  customerDetails?: {
-    name?: string;
-    phone?: string;
-    email?: string;
-  };
-  paymentDueDate?: string;
-  status?: 'PENDING' | 'COMPLETED' | 'REJECTED';
-}
+import { CreateCreditDto, UpdateCreditDto, CreditQueryParams, MakePaymentDto } from './credit.interface';
 
 export class CreditService {
   async createCredit(data: CreateCreditDto): Promise<Credit> {
     try {
+      // Validate credit amount calculation
+      if (data.totalAmount !== data.downPayment + data.creditAmount) {
+        throw new AppError('Total amount must equal down payment plus credit amount', 400);
+      }
+
       const credit = await CreditModel.create(data);
       return credit;
     } catch (error) {
+      if (error instanceof AppError) throw error;
       throw new AppError('Failed to create credit record', 400);
     }
   }
@@ -111,19 +80,27 @@ export class CreditService {
     }
     return credit;
   }
+
   async updateCredit(id: string, data: UpdateCreditDto): Promise<Credit> {
-    // If status is being updated to COMPLETED, set creditAmount to 0 and equalize downPayment with totalAmount
+    const existingCredit = await CreditModel.findById(id);
+    if (!existingCredit) {
+      throw new AppError('Credit record not found', 404);
+    }
+
     if (data.status === 'COMPLETED') {
       data.creditAmount = 0;
-      
-      // Fetch existing credit details
-      const existingCredit = await CreditModel.findById(id);
-      if (!existingCredit) {
-        throw new AppError('Credit record not found', 404);
-      }
-
-      // Ensure downPayment equals totalAmount when completed
       data.downPayment = existingCredit.totalAmount;
+    }
+
+    // Validate total amount if being updated
+    if (data.totalAmount || data.downPayment || data.creditAmount) {
+      const newTotal = data.totalAmount ?? existingCredit.totalAmount;
+      const newDownPayment = data.downPayment ?? existingCredit.downPayment;
+      const newCreditAmount = data.creditAmount ?? existingCredit.creditAmount;
+
+      if (newTotal !== newDownPayment + newCreditAmount) {
+        throw new AppError('Total amount must equal down payment plus credit amount', 400);
+      }
     }
 
     const credit = await CreditModel.findByIdAndUpdate(
@@ -175,4 +152,50 @@ export class CreditService {
     ]);
     return summary;
   }
+
+  async makePayment(creditId: string, paymentData: MakePaymentDto): Promise<Credit> {
+    const credit = await CreditModel.findById(creditId);
+    if (!credit) {
+      throw new AppError('Credit record not found', 404);
+    }
+
+    if (credit.status === 'REJECTED') {
+      throw new AppError('Cannot make payment on rejected credit', 400);
+    }
+
+    if (credit.status === 'COMPLETED') {
+      throw new AppError('Credit is already fully paid', 400);
+    }
+
+    if (paymentData.amount <= 0) {
+      throw new AppError('Payment amount must be greater than 0', 400);
+    }
+
+    if (paymentData.amount > credit.creditAmount) {
+      throw new AppError(`Payment amount exceeds remaining credit amount of ${credit.creditAmount}`, 400);
+    }
+
+    const newCreditAmount = credit.creditAmount - paymentData.amount;
+    const newDownPayment = credit.downPayment + paymentData.amount;
+    const newStatus = newCreditAmount === 0 ? 'COMPLETED' : 'PENDING';
+
+    const updatedCredit = await CreditModel.findByIdAndUpdate(
+      creditId,
+      {
+        $set: {
+          creditAmount: newCreditAmount,
+          downPayment: newDownPayment,
+          status: newStatus
+        }
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedCredit) {
+      throw new AppError('Failed to update credit record', 500);
+    }
+
+    return updatedCredit;
+  }
 }
+

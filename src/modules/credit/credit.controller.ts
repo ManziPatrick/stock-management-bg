@@ -2,11 +2,15 @@ import { Request, Response } from 'express';
 import { CreditService } from './credit.service';
 import { catchAsync } from '../utils/catchAsync';
 
-const creditService = new CreditService();
-
 export class CreditController {
+  private creditService: CreditService;
+
+  constructor() {
+    this.creditService = new CreditService();
+  }
+
   createCredit = catchAsync(async (req: Request, res: Response) => {
-    const credit = await creditService.createCredit(req.body);
+    const credit = await this.creditService.createCredit(req.body);
     res.status(201).json({
       status: 'success',
       data: credit,
@@ -14,7 +18,7 @@ export class CreditController {
   });
 
   getAllCredits = catchAsync(async (req: Request, res: Response) => {
-    const result = await creditService.getAllCredits(req.query);
+    const result = await this.creditService.getAllCredits(req.query);
     res.status(200).json({
       status: 'success',
       ...result,
@@ -22,7 +26,7 @@ export class CreditController {
   });
 
   getCreditById = catchAsync(async (req: Request, res: Response) => {
-    const credit = await creditService.getCreditById(req.params.id);
+    const credit = await this.creditService.getCreditById(req.params.id);
     res.status(200).json({
       status: 'success',
       data: credit,
@@ -30,7 +34,7 @@ export class CreditController {
   });
 
   updateCredit = catchAsync(async (req: Request, res: Response) => {
-    const credit = await creditService.updateCredit(req.params.id, req.body);
+    const credit = await this.creditService.updateCredit(req.params.id, req.body);
     res.status(200).json({
       status: 'success',
       data: credit,
@@ -38,7 +42,7 @@ export class CreditController {
   });
 
   deleteCredit = catchAsync(async (req: Request, res: Response) => {
-    await creditService.deleteCredit(req.params.id);
+    await this.creditService.deleteCredit(req.params.id);
     res.status(204).json({
       status: 'success',
       data: null,
@@ -46,10 +50,18 @@ export class CreditController {
   });
 
   getCreditSummary = catchAsync(async (req: Request, res: Response) => {
-    const summary = await creditService.getCreditSummary();
+    const summary = await this.creditService.getCreditSummary();
     res.status(200).json({
       status: 'success',
       data: summary,
+    });
+  });
+
+  makePayment = catchAsync(async (req: Request, res: Response) => {
+    const credit = await this.creditService.makePayment(req.params.id, req.body);
+    res.status(200).json({
+      status: 'success',
+      data: credit,
     });
   });
 }

@@ -7,6 +7,8 @@ import { Request, Response } from 'express';
 import  CustomError  from '../utils/customError';
 import { Types } from 'mongoose';
 import { IProduct } from './product.interface';
+import Purchase from '../purchase/purchase.model';
+import Product from './product.model';
 
 class ProductControllers {
   services = productServices;
@@ -122,13 +124,18 @@ class ProductControllers {
   /**
    * update product
    */
-  update = asyncHandler(async (req, res) => {
-    const result = await this.services.update(req.params.id, req.body);
-      sendResponse(res, {
+  updateProduct = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const updatePurchases = req.query.updatePurchases === 'true';
+    const payload = req.body;
+  
+    const result = await productServices.update(id, payload, { updatePurchases });
+
+    sendResponse(res, {
       success: true,
       statusCode: httpStatus.OK,
       message: 'Product updated successfully!',
-      data: result
+      data: result,
     });
   });
 
@@ -179,16 +186,132 @@ class ProductControllers {
   /**
    * delete multiple product
    */
-  
-  bulkDelete = asyncHandler(async (req, res) => {
-    await this.services.bulkDelete(req.body);
+  getCollectionDiscrepancies = asyncHandler(async (req: Request, res: Response) => {
+    try {
+      // Default pagination
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+      const skip = (page - 1) * limit;
 
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.OK,
-      message: 'Delete Selected Product successfully!'
-    });
+      // Aggregate pipeline to find discrepancies
+      const discrepancies = await Product.aggregate([
+        // Lookup purchases for each product
+        {
+          $lookup: {
+            from: 'purchases',
+            localField: '_id',
+            foreignField: 'product',
+            as: 'purchases'
+          }
+        },
+        // Unwind purchases array to compare each purchase
+        { $unwind: '$purchases' },
+        // Match documents where there are differences
+        {
+          $match: {
+            $or: [
+              // Compare measurement type
+              { $expr: { $ne: ['$measurement.type', '$purchases.measurement.type'] } },
+              // Compare measurement value
+              { $expr: { $ne: ['$measurement.value', '$purchases.measurement.value'] } },
+              // Compare measurement unit
+              { $expr: { $ne: ['$measurement.unit', '$purchases.measurement.unit'] } },
+              // Compare price with unitPrice
+              { $expr: { $ne: ['$price', '$purchases.unitPrice'] } }
+            ]
+          }
+        },
+        // Group back by product to avoid duplicates
+        {
+          $group: {
+            _id: '$_id',
+            product: { $first: '$$ROOT' },
+            discrepantPurchases: {
+              $push: {
+                purchaseId: '$purchases._id',
+                purchaseMeasurement: '$purchases.measurement',
+                purchaseUnitPrice: '$purchases.unitPrice',
+                purchaseDate: '$purchases.createdAt'
+              }
+            }
+          }
+        },
+        // Add additional product fields
+        {
+          $project: {
+            _id: 1,
+            name: '$product.name',
+            productMeasurement: '$product.measurement',
+            productPrice: '$product.price',
+            discrepantPurchases: 1,
+            totalDiscrepancies: { $size: '$discrepantPurchases' }
+          }
+        },
+        // Skip and limit for pagination
+        { $skip: skip },
+        { $limit: limit }
+      ]);
+
+      // Get total count for pagination
+      const totalCount = await Product.aggregate([
+        { $lookup: { from: 'purchases', localField: '_id', foreignField: 'product', as: 'purchases' } },
+        { $unwind: '$purchases' },
+        {
+          $match: {
+            $or: [
+              { $expr: { $ne: ['$measurement.type', '$purchases.measurement.type'] } },
+              { $expr: { $ne: ['$measurement.value', '$purchases.measurement.value'] } },
+              { $expr: { $ne: ['$measurement.unit', '$purchases.measurement.unit'] } },
+              { $expr: { $ne: ['$price', '$purchases.unitPrice'] } }
+            ]
+          }
+        },
+        { $group: { _id: '$_id' } },
+        { $count: 'total' }
+      ]);
+
+      const total = totalCount[0]?.total || 0;
+
+      // Send response
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'Collection discrepancies retrieved successfully',
+        meta: {
+          page,
+          limit,
+          total,
+          totalPage: Math.ceil(total / limit)
+        },
+        data: discrepancies.map(item => ({
+          productId: item._id,
+          productName: item.name,
+          productMeasurement: item.productMeasurement,
+          productPrice: item.productPrice,
+          discrepantPurchases: item.discrepantPurchases,
+          totalDiscrepancies: item.totalDiscrepancies
+        }))
+      });
+    } catch (error: any) {
+      sendResponse(res, {
+        success: false,
+        statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message || 'Failed to retrieve collection discrepancies'
+      });
+    }
   });
+
+
+ bulkDelete = asyncHandler(async (req, res) => {
+  await this.services.bulkDelete(req.body);
+
+  sendResponse(res, {
+    success: true,
+    statusCode: httpStatus.OK,
+    message: 'Delete Selected Product successfully!'
+  });
+});
+
 }
 
 const productControllers = new ProductControllers();

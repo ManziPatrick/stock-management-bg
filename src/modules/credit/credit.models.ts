@@ -1,37 +1,68 @@
-import { Schema, model, Document } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 
-interface CustomerDetails {
-    name: string;
-    phone: string;
-    email: string;
+export interface CustomerDetails {
+  name: string;
+  phone: string;
+  email: string;
 }
 
-interface Credit extends Document {
-    productId: string;
-    totalAmount: number;
-    downPayment: number;
-    creditAmount: number;
-    customerDetails: CustomerDetails;
-    paymentDueDate: string;
-    status: 'PENDING' | 'COMPLETED' | 'REJECTED';
+export interface Credit extends Document {
+  productId: string;
+  totalAmount: number;
+  downPayment: number;
+  creditAmount: number;
+  customerDetails: CustomerDetails;
+  paymentDueDate: string;
+  status: 'PENDING' | 'COMPLETED' | 'REJECTED';
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-const CustomerDetailsSchema = new Schema<CustomerDetails>({
-    name: { type: String, required: true },
-    phone: { type: String, required: true },
-    email: { type: String, required: true }
+const CreditSchema = new Schema({
+  productId: {
+    type: String,
+    required: true
+  },
+  totalAmount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  downPayment: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  creditAmount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  customerDetails: {
+    name: {
+      type: String,
+      required: true
+    },
+    phone: {
+      type: String,
+      required: true
+    },
+    email: {
+      type: String,
+      required: true
+    }
+  },
+  paymentDueDate: {
+    type: String,
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['PENDING', 'COMPLETED', 'REJECTED'],
+    default: 'PENDING'
+  }
+}, {
+  timestamps: true
 });
 
-const CreditSchema = new Schema<Credit>({
-    productId: { type: String, required: true },
-    totalAmount: { type: Number, required: true },
-    downPayment: { type: Number, required: true },
-    creditAmount: { type: Number, required: true },
-    customerDetails: { type: CustomerDetailsSchema, required: true },
-    paymentDueDate: { type: String, required: true },
-    status: { type: String, enum: ['PENDING', 'COMPLETED', 'REJECTED'], required: true }
-});
-
-const CreditModel = model<Credit>('Credit', CreditSchema);
-
-export { CreditModel, Credit };
+export const CreditModel = mongoose.model<Credit>('Credit', CreditSchema);

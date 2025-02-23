@@ -56,6 +56,8 @@ class PurchaseController {
     });
   });
 
+  
+
   // delete
   delete = asyncHandler(async (req, res) => {
     await this.services.delete(req.params.id);
@@ -66,6 +68,7 @@ class PurchaseController {
       message: 'Purchase deleted successfully!'
     });
   });
+  
 }
 
 const purchaseController = new PurchaseController();

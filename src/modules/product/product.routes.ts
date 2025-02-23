@@ -32,9 +32,15 @@ productRoute.post(
     authorizeRoles('KEEPER', 'ADMIN'), productControllers.create
   );
   
+  productRoute.get(
+    '/updated', 
+    verifyAuth,
+    authorizeRoles('ADMIN', 'KEEPER'),
+    productControllers.getCollectionDiscrepancies
+  );
 // productRoute.get('/', productControllers.readAll);
 productRoute.patch('/:id/add',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(productValidator.addStockSchema), productControllers.addStock);
-productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(productValidator.updateSchema), productControllers.update);
+productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(productValidator.updateSchema), productControllers.updateProduct);
 productRoute.get('/:id', productControllers.readSingle);
 productRoute.delete('/:id',authorizeRoles('ADMIN'), productControllers.delete);
 
