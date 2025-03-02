@@ -4,20 +4,49 @@ import validateRequest from '../../middlewares/validateRequest';
 import userValidator from './user.validator';
 import { authorizeRoles, verifyAuth } from '../../middlewares/verifyAuth';
 
+
 const userRoutes = Router();
 
-// Auth routes
+/**
+ * --- SUPER ADMIN Routes ---
+ */
 userRoutes.post(
-  '/register', 
+  '/create-owner',
   verifyAuth,
-  authorizeRoles('ADMIN'), 
-  validateRequest(userValidator.registerSchema), 
+  authorizeRoles('SUPER_ADMIN'),
+  validateRequest(userValidator.createOwnerSchema),
+  userControllers.createOwnerAccount
+);
+
+userRoutes.get(
+  '/all-users',
+  verifyAuth,
+  authorizeRoles('SUPER_ADMIN'),
+  userControllers.getAllUsersForSuperAdmin
+);
+
+userRoutes.get(
+  '/business/:businessName',
+  verifyAuth,
+  authorizeRoles('SUPER_ADMIN'),
+  userControllers.getUsersByBusinessName
+);
+
+/**
+ * --- Auth Routes ---
+ */
+
+userRoutes.post(
+  '/register',
+  verifyAuth,
+  authorizeRoles('ADMIN'),
+  validateRequest(userValidator.registerSchema),
   userControllers.createUser
 );
 
 userRoutes.post(
-  '/login', 
-  validateRequest(userValidator.loginSchema), 
+  '/login',
+  validateRequest(userValidator.loginSchema),
   userControllers.login
 );
 
@@ -28,16 +57,18 @@ userRoutes.delete(
   userControllers.deleteUser
 );
 
-// Profile routes
+/**
+ * --- Profile Routes ---
+ */
 userRoutes.get(
-  '/self', 
-  verifyAuth, 
+  '/self',
+  verifyAuth,
   userControllers.getSelf
 );
 
 userRoutes.patch(
-  '/', 
-  verifyAuth, 
+  '/',
+  verifyAuth,
   validateRequest(userValidator.updatedProfileSchema),
   userControllers.updateProfile
 );
@@ -48,20 +79,27 @@ userRoutes.post(
   validateRequest(userValidator.changePasswordSchema),
   userControllers.changePassword
 );
-userRoutes.delete('/users/:id', 
-  verifyAuth, authorizeRoles('ADMIN'),
-   userControllers.deleteUser);
 
-userRoutes.post(
-  '/register', 
+// Duplicate delete route (for demonstration as provided; consider removing duplicates)
+userRoutes.delete(
+  '/users/:id',
   verifyAuth,
-  authorizeRoles('ADMIN'), 
-  validateRequest(userValidator.registerSchema,), 
+  authorizeRoles('ADMIN'),
+  userControllers.deleteUser
+);
+
+// Duplicate register route (as provided; consider consolidating if not needed)
+userRoutes.post(
+  '/register',
+  verifyAuth,
+  authorizeRoles('ADMIN'),
+  validateRequest(userValidator.registerSchema),
   userControllers.createUser
 );
 
-
-// Admin management routes
+/**
+ * --- Admin Management Routes ---
+ */
 userRoutes.post(
   '/create',
   verifyAuth,

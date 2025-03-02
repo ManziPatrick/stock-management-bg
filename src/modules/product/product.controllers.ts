@@ -4,7 +4,7 @@ import sendResponse from '../../lib/sendResponse';
 import productServices from './product.services';
 import { upload, uploadToCloudinary } from '../image/cloudinaryConfig';
 import { Request, Response } from 'express';
-import  CustomError  from '../utils/customError';
+import CustomError from '../utils/customError';
 import { Types } from 'mongoose';
 import { IProduct } from './product.interface';
 import Purchase from '../purchase/purchase.model';
@@ -16,7 +16,6 @@ class ProductControllers {
   /**
    * create new product
    */
-
   create = [
     upload.array('images', 5),
     uploadToCloudinary,
@@ -39,7 +38,8 @@ class ProductControllers {
           unit: req.body.unit,
           measurement: measurement,
           images: imageUrls,
-          user: new Types.ObjectId(req.user._id)
+          user: new Types.ObjectId(req.user._id),
+          createdBy: new Types.ObjectId(req.user._id) // Explicitly set the creator
         };
 
         const result = await this.services.create(productData, req.user._id);
@@ -57,7 +57,6 @@ class ProductControllers {
   /**
    * Add product to stock
    */
-
   addStock = asyncHandler(async (req, res) => {
     const result = await this.services.addToStock(req.params.id, req.body, req.user._id);
 
@@ -70,12 +69,11 @@ class ProductControllers {
   });
 
   /**
-   * Get all product of user with query
+   * Get all products user has access to with query
    */
-
   readAll = asyncHandler(async (req, res) => {
-    const result = await this.services.readAll(req.query);
-
+    const result = await this.services.readAll(req.query, req.user._id);
+console.log("kjk,h",)
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
 
@@ -86,8 +84,8 @@ class ProductControllers {
       meta: {
         page,
         limit,
-        total: result?.totalCount[0]?.total || 0,
-        totalPage: Math.ceil(result?.totalCount[0]?.total / page)
+        total: result?.totalCount || 0,
+        totalPage: Math.ceil(result?.totalCount / limit)
       },
       data: result.data
     });
@@ -97,19 +95,18 @@ class ProductControllers {
    * Get total product
    */
   getTotalProduct = asyncHandler(async (req, res) => {
-    const result = await this.services.countTotalProduct();
-      sendResponse(res, {
+    const result = await this.services.countTotalProduct(req.user._id);
+    sendResponse(res, {
       success: true,
       statusCode: httpStatus.OK,
       message: 'Count total products successfully',
-      data: result[0]
+      data: result
     });
   });
 
   /**
    * Get single product of user
    */
-
   readSingle = asyncHandler(async (req, res) => {
     const result = await this.services.read(req.params.id, req.user._id);
 
@@ -129,7 +126,10 @@ class ProductControllers {
     const updatePurchases = req.query.updatePurchases === 'true';
     const payload = req.body;
   
-    const result = await productServices.update(id, payload, { updatePurchases });
+    const result = await productServices.update(id, payload, { 
+      updatePurchases,
+      userId: req.user._id 
+    });
 
     sendResponse(res, {
       success: true,
@@ -140,41 +140,46 @@ class ProductControllers {
   });
 
   readAllPublic = asyncHandler(async (req, res) => {
-  try {
-    const result = await this.services.readAllPublic(req.query);
+    try {
+      // console.log("hhjkkkiiuun",req)
+      // If user is not authenticated, pass a default ID or null to the service
+      const userId = req.user?._id || null;
+      console.log("hh000jkkkiiuun",userId)
+      
+      const result = await this.services.readAllPublic(req.query, userId);
+  
+      const page = Number(req.query.page) || 1;
+      const limit = Number(req.query.limit) || 10;
+  
+      // Return the response with pagination data
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'All products retrieved successfully',
+        meta: {
+          page,
+          limit,
+          total: result?.totalCount || 0,
+          totalPage: Math.ceil(result?.totalCount / limit),
+          summary: result?.summary || null,
+        },
+        data: result.data,
+      });
+    } catch (error) {
+      console.error(error);
+      sendResponse(res, {
+        success: false,
+        statusCode: httpStatus.INTERNAL_SERVER_ERROR,
+        message: 'Failed to retrieve products',
+      });
+    }
+  });
 
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 10;
-
-    // Return the response with pagination data
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.OK,
-      message: 'All products retrieved successfully',
-      meta: {
-        page,
-        limit,
-        total: result?.totalCount || 0,
-        totalPage: Math.ceil(result?.totalCount / limit),
-        summary: result?.summary || null,
-      },
-      data: result.data,
-    });
-  } catch (error) {
-    // Handling unexpected errors and sending an error response
-    console.error(error);
-    sendResponse(res, {
-      success: false,
-      statusCode: httpStatus.INTERNAL_SERVER_ERROR,
-      message: 'Failed to retrieve products',
-    });
-  }
-});
   /**
    * delete product
    */
   delete = asyncHandler(async (req, res) => {
-    await this.services.delete(req.params.id);
+    await this.services.delete(req.params.id, req.user._id);
 
     sendResponse(res, {
       success: true,
@@ -184,7 +189,7 @@ class ProductControllers {
   });
 
   /**
-   * delete multiple product
+   * Get collection discrepancies
    */
   getCollectionDiscrepancies = asyncHandler(async (req: Request, res: Response) => {
     try {
@@ -193,8 +198,20 @@ class ProductControllers {
       const limit = Number(req.query.limit) || 10;
       const skip = (page - 1) * limit;
 
+      // Get accessible user IDs for filtering
+      const accessibleUserIds = await this.services.getAccessibleUserIds(req.user._id);
+      
       // Aggregate pipeline to find discrepancies
       const discrepancies = await Product.aggregate([
+        // First, filter by accessible users
+        {
+          $match: {
+            $or: [
+              { user: { $in: accessibleUserIds } },
+              { createdBy: new Types.ObjectId(req.user._id) }
+            ]
+          }
+        },
         // Lookup purchases for each product
         {
           $lookup: {
@@ -252,8 +269,17 @@ class ProductControllers {
         { $limit: limit }
       ]);
 
-      // Get total count for pagination
+      // Get total count for pagination with the same user access filtering
       const totalCount = await Product.aggregate([
+        // First, filter by accessible users
+        {
+          $match: {
+            $or: [
+              { user: { $in: accessibleUserIds } },
+              { createdBy: new Types.ObjectId(req.user._id) }
+            ]
+          }
+        },
         { $lookup: { from: 'purchases', localField: '_id', foreignField: 'product', as: 'purchases' } },
         { $unwind: '$purchases' },
         {
@@ -301,17 +327,18 @@ class ProductControllers {
     }
   });
 
+  /**
+   * Bulk delete products
+   */
+  bulkDelete = asyncHandler(async (req, res) => {
+    await this.services.bulkDelete(req.body.ids, req.user._id);
 
- bulkDelete = asyncHandler(async (req, res) => {
-  await this.services.bulkDelete(req.body);
-
-  sendResponse(res, {
-    success: true,
-    statusCode: httpStatus.OK,
-    message: 'Delete Selected Product successfully!'
+    sendResponse(res, {
+      success: true,
+      statusCode: httpStatus.OK,
+      message: 'Delete Selected Products successfully!'
+    });
   });
-});
-
 }
 
 const productControllers = new ProductControllers();

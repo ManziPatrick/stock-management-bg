@@ -1,4 +1,5 @@
 export const UserRole = {
+  SUPER_ADMIN:'SUPER_ADMIN',
   ADMIN: 'ADMIN',
   KEEPER: 'KEEPER',
   USER: 'USER'
@@ -10,5 +11,5 @@ export const UserStatus = {
   BLOCK: 'BLOCK'
 } as const;
 
-export type TUserRole = 'ADMIN' | 'USER'|'KEEPER';
+export type TUserRole = 'SUPER_ADMIN'|'ADMIN' | 'USER'|'KEEPER';
 export type TUserStatus = 'PENDING' | 'ACTIVE' | 'BLOCK';

@@ -19,21 +19,106 @@ class UserControllers {
     });
   });
 
-  // Register a new account by admin
-  createUser = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'ADMIN') {
-      throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can create users');
+  // Super admin creates an owner/admin account
+  createOwnerAccount = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Only super admins can create owner accounts');
     }
 
-    const newUser = { ...req.body, createdBy: req.user._id }; // Add admin ID
-    const result = await this.services.createUser(newUser);
+    const newOwner = { 
+      ...req.body, 
+      role: 'ADMIN', // Force role to be ADMIN
+      createdBy: req.user._id 
+    };
+    
+    const result = await this.services.createOwnerAccount(newOwner);
 
     sendResponse(res, {
       success: true,
       statusCode: httpStatus.CREATED,
-      message: 'User created successfully!',
+      message: 'Owner account created successfully!',
       data: result,
     });
+  });
+
+  // Get all users (super admin only)
+  getAllUsersForSuperAdmin = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Only super admins can view all users');
+    }
+
+    const result = await this.services.getAllUsers();
+
+    sendResponse(res, {
+      success: true,
+      statusCode: httpStatus.OK,
+      message: 'All users retrieved successfully!',
+      data: result,
+    });
+  });
+
+  // Get users by business name
+  getUsersByBusinessName = asyncHandler(async (req, res) => {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Only super admins can filter users by business');
+    }
+
+    const { businessName } = req.params;
+    const result = await this.services.getUsersByBusinessName(businessName);
+
+    sendResponse(res, {
+      success: true,
+      statusCode: httpStatus.OK,
+      message: 'Users retrieved successfully!',
+      data: result,
+    });
+  });
+
+  // Create user
+  createUser = asyncHandler(async (req, res) => {
+    // Super admin can create any type of user
+    if (req.user.role === 'SUPER_ADMIN') {
+      const newUser = { ...req.body, createdBy: req.user._id };
+      const result = await this.services.createUser(newUser);
+      
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.CREATED,
+        message: 'User created successfully!',
+        data: result,
+      });
+      return;
+    }
+    
+    // Admin can only create admin (of same company), keeper or user
+    if (req.user.role === 'ADMIN') {
+      // Get admin's business info
+      const admin = await this.services.getSelf(req.user._id);
+      
+      // Admin can't create SUPER_ADMIN
+      if (req.body.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Admins cannot create super admin accounts');
+      }
+      
+      // If creating another admin, they must be in same business
+      if (req.body.role === 'ADMIN' && admin && admin.businessInfo) {
+        req.body.businessInfo = admin.businessInfo;
+      }
+      
+      const newUser = { ...req.body, createdBy: req.user._id };
+      const result = await this.services.createUser(newUser);
+      
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.CREATED,
+        message: 'User created successfully!',
+        data: result,
+      });
+      return;
+    }
+    
+    // Other roles can't create users
+    throw new CustomError(httpStatus.FORBIDDEN, 'Only admins and super admins can create users');
   });
 
   // Get all users created by the admin
@@ -54,14 +139,39 @@ class UserControllers {
 
   // Update user role (admin only for their users)
   updateUserRole = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'ADMIN') {
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
       throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can update user roles');
     }
 
-    // Ensure admin can only update their created users
+    // Super admin can update any user role except another SUPER_ADMIN
+    if (req.user.role === 'SUPER_ADMIN') {
+      const user = await this.services.getUserById(req.params.userId);
+      
+      // Can't change another super admin's role
+      if (user.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot change super admin role');
+      }
+      
+      const result = await this.services.updateUserRole(req.params.userId, req.body.role);
+      
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'User role updated successfully!',
+        data: result,
+      });
+      return;
+    }
+
+    // Regular admin can only update their created users
     const user = await this.services.getUserById(req.params.userId);
     if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
       throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
+    }
+    
+    // Regular admin can't set someone to SUPER_ADMIN
+    if (req.body.role === 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Cannot set user to super admin role');
     }
 
     const result = await this.services.updateUserRole(req.params.userId, req.body.role);
@@ -73,8 +183,34 @@ class UserControllers {
       data: result,
     });
   });
-  //delect user 
+
+  // Delete user 
   deleteUser = asyncHandler(async (req, res) => {
+    // Super admin can delete any user except another super admin
+    if (req.user.role === 'SUPER_ADMIN') {
+      const user = await this.services.getUserById(req.params.id);
+      
+      if (user.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot delete super admin accounts');
+      }
+    } 
+    // Regular admin can only delete their created users
+    else if (req.user.role === 'ADMIN') {
+      const user = await this.services.getUserById(req.params.id);
+      
+      if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users you created');
+      }
+      
+      if (user.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot delete super admin accounts');
+      }
+    }
+    // Other roles can't delete users
+    else {
+      throw new CustomError(httpStatus.FORBIDDEN, 'You do not have permission to delete users');
+    }
+
     await this.services.deleteUser(req.params.id);
 
     sendResponse(res, {

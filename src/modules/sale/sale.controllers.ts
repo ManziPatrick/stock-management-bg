@@ -1,19 +1,21 @@
+
+// sale.controller.ts
+import { Request, Response } from 'express';
 import httpStatus from 'http-status';
+import asyncHandler from '../../lib/asyncHandler';
 import sendResponse from '../../lib/sendResponse';
 import saleServices from './sale.services';
-import { Request, Response, NextFunction } from 'express';
-import { Types, Model } from 'mongoose';
-import asyncHandler from '../../lib/asyncHandler';
 
-import SaleModel from './sale.model';
-import { ISale } from './sale.interface';
- 
-class SaleControllers {
-  private model: Model<ISale>;
-
-  constructor() {
-    this.model = SaleModel; // Use the imported model
-  }
+class SaleController {
+  create = asyncHandler(async (req: Request, res: Response) => {
+    const result = await saleServices.create(req.body, req.user._id);
+    return sendResponse(res, {
+      statusCode: httpStatus.CREATED,
+      success: true,
+      message: 'Sale created successfully',
+      data: result
+    });
+  });
 
   readAll = asyncHandler(async (req: Request, res: Response) => {
     const query = {
@@ -24,50 +26,21 @@ class SaleControllers {
       sortOrder: (req.query.sortOrder as string || 'desc').toLowerCase()
     };
 
-    const matchStage = {
-      $match: {
-        $or: [
-          { productName: { $regex: query.search, $options: 'i' } },
-          { buyerName: { $regex: query.search, $options: 'i' } },
-        ],
-      },
-    };
-
-    try {
-      const result = await saleServices.readAll(query);
-      return sendResponse(res, {
-        statusCode: httpStatus.OK,
-        success: true,
-        message: 'Sales retrieved successfully',
-        data: result.data,
-         //@ts-ignore
-        meta: result.meta
-      });
-    } catch (error) {
-      return sendResponse(res, {
-        statusCode: httpStatus.INTERNAL_SERVER_ERROR,
-        success: false,
-        message: 'Error retrieving sales',
-         //@ts-ignore
-        error: error instanceof Error ? error.message : 'Unknown error occurred'
-      });
-    }
-  });
-
-  create = asyncHandler(async (req: Request, res: Response) => {
-    const { user } = req;
-    const result = await saleServices.create(req.body, user._id);
+    const result = await saleServices.readAll(query);
     return sendResponse(res, {
-      statusCode: httpStatus.CREATED,
+      statusCode: httpStatus.OK,
       success: true,
-      message: 'Sale created successfully',
-      data: result
+      message: 'Sales retrieved successfully',
+      data: result.data,
+      meta: {
+        ...result.meta,
+        totalPage: result.meta.totalPages
+      }
     });
   });
 
   readSingle = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
-    const result = await saleServices.readById(id);
+    const result = await saleServices.readById(req.params.id);
     return sendResponse(res, {
       statusCode: httpStatus.OK,
       success: true,
@@ -75,6 +48,7 @@ class SaleControllers {
       data: result
     });
   });
+
 
   update = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -144,4 +118,4 @@ class SaleControllers {
   });
 }
 
-export default new SaleControllers();
+export default new SaleController();

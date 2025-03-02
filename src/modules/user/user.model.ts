@@ -21,7 +21,12 @@ const userSchema = new Schema<IUser>(
     twitter: { type: String },
     linkedin: { type: String },
     instagram: { type: String },
-    createdBy: { type: Schema.Types.ObjectId, ref: 'user', required: true }
+    businessInfo: {
+      businessName: { type: String },
+      businessAddress: { type: String },
+      businessPhone: { type: String }
+    },
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' } // Reference to the user who created this account
   },
   { timestamps: true }
 );
@@ -30,9 +35,8 @@ userSchema.pre('save', async function (next) {
   if (this.isModified('password')) {
     this.password = await hashPassword(this.password);
   }
-
   next();
 });
 
-const User = model<IUser>('user', userSchema);
+const User = model<IUser>('User', userSchema);
 export default User;

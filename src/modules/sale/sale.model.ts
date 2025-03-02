@@ -1,66 +1,35 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
 
-// Define the Sale interface
-export interface ISale {
-  user: Types.ObjectId;
-  product: Types.ObjectId;
-  productName: string;
-  productPrice: number;
-  quantity: number;
-  SellingPrice: number; // ✅ Renamed from "SellingPrice" for consistency
-  buyerName?: string;
-  date: Date; // ✅ Added missing field
-  totalPrice: number;
-  paymentMode: 'cash' | 'momo' | 'cheque' | 'transfer';
-  transactionId: Types.ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
-}
+// sale.model.ts
+import mongoose, { Schema } from 'mongoose';
+import { ISaleTransaction } from './sale.interface';
 
-// Define the Profit Calculation Query interface
-export interface ProfitCalculationQuery {
-  page?: number;
-  limit?: number;
-  search?: string;
-  status?: string;
-  startDate?: string;
-  endDate?: string;
-}
+const productSaleSchema = new Schema({
+  product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
+  productName: { type: String, required: true },
+  productPrice: { type: Number, required: true },
+  SellingPrice: { type: Number, required: true },
+  quantity: { type: Number, required: true }
+});
 
-// Define the Profit Summary interface
-export interface ProfitSummary {
-  totalSales: number;
-  totalExpenses: number;
-  grossProfit: number;
-  netProfit: number;
-  profitMargin: number;
-}
-
-// Define the Sale schema
-const saleSchema = new Schema<ISale>(
+const saleTransactionSchema = new Schema<ISaleTransaction>(
   {
-    productName: { type: String, required: true },
-    product: { type: Schema.Types.ObjectId, ref: 'Product', required: true },
-    quantity: { type: Number, required: true },
-    productPrice: { type: Number, required: true },
-    SellingPrice: { type: Number, required: true }, // ✅ Updated name
-    totalPrice: { type: Number, required: true },
-    buyerName: { type: String },
-    date: { type: Date, required: true }, // ✅ Added missing field
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    buyerName: { type: String, required: true },
+    date: { type: Date, required: true },
     paymentMode: {
       type: String,
       enum: ['cash', 'momo', 'cheque', 'transfer'],
-      default: 'cash',
+      default: 'cash'
     },
-    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    paymentDetails: {
+      mode: { type: String, required: true }
+    },
+    products: [productSaleSchema],
     transactionId: { type: Schema.Types.ObjectId, required: true, index: true },
+    totalAmount: { type: Number, required: true }
   },
-  { timestamps: true } // ✅ Ensures createdAt & updatedAt exist
+  { timestamps: true }
 );
 
-// Add compound index for optimized queries
-saleSchema.index({ transactionId: 1, createdAt: -1 });
-
-// Define and export the Sale model
-const Sale = mongoose.model<ISale>('Sale', saleSchema);
-export default Sale;
+const SaleTransaction = mongoose.model<ISaleTransaction>('SaleTransaction', saleTransactionSchema);
+export default SaleTransaction;

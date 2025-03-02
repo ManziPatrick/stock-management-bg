@@ -1,64 +1,6 @@
 import { z } from 'zod';
 import { Types } from 'mongoose';
 
-// Define the payment mode enum
-const PaymentMode = z.enum(['cash', 'momo', 'cheque', 'transfer']);
-
-// Define the base interface for sale input
-interface SaleInput {
-  product: string;
-  productName: string;
-  quantity: number;
-  productPrice: number;
-  SellingPrice: number;
-  buyerName?: string;
-  date: string | Date;
-  paymentMode?: 'cash' | 'momo' | 'cheque' | 'transfer';
-  paymentDetails?: {
-    mode: 'cash' | 'momo' | 'cheque' | 'transfer';
-    momoNumber?: string;
-    chequeNumber?: string;
-    bankName?: string;
-    accountNumber?: string;
-  };
-}
-
-// Define validation error interface
-interface ValidationError {
-  success: false;
-  statusCode: number;
-  message: string;
-  errors: Record<string, string>;
-  stack: null;
-}
-
-// Define success response interface
-interface ValidationSuccess<T> {
-  success: true;
-  data: T;
-}
-
-// Payment details schema based on payment mode
-const paymentDetailsSchema = z
-  .object({
-    mode: PaymentMode,
-    momoNumber: z.string().optional(),
-    chequeNumber: z.string().optional(),
-    bankName: z.string().optional(),
-    accountNumber: z.string().optional(),
-  })
-  .refine(
-    (data) => {
-      if (data.mode === 'momo' && !data.momoNumber) return false;
-      if (data.mode === 'cheque' && !data.chequeNumber) return false;
-      if (data.mode === 'transfer' && (!data.bankName || !data.accountNumber)) return false;
-      return true;
-    },
-    {
-      message: 'Missing required payment details for selected payment mode',
-    }
-  );
-
 // Preprocess date: convert string or Date to a Date object.
 const datePreprocessor = z.preprocess((arg) => {
   if (typeof arg === 'string' || arg instanceof Date) {
@@ -82,8 +24,6 @@ const baseSaleObjectSchema = z.object({
   SellingPrice: z.number().positive('Selling price must be positive'),
   buyerName: z.string().min(2, 'Buyer name must be at least 2 characters').optional(),
   date: datePreprocessor, // For updates we expect a date.
-  paymentMode: PaymentMode.default('cash'),
-  paymentDetails: paymentDetailsSchema.optional(),
 });
 
 // Add an object-level refinement to ensure SellingPrice is at least 50% of productPrice,
@@ -121,8 +61,6 @@ const createSchema = z
     products: z.array(baseSaleCreateSchema).min(1, 'At least one product is required'),
     buyerName: z.string().min(2, 'Buyer name must be at least 2 characters').optional(),
     date: datePreprocessor, // common date provided at the top level (required)
-    paymentMode: PaymentMode.default('cash'),
-    paymentDetails: paymentDetailsSchema.optional(),
   })
   .transform((data) => {
     const commonDate = data.date;
@@ -142,7 +80,13 @@ const updateSchema = baseSaleObjectSchema.partial().omit({
 });
 
 // Error formatter
-const formatZodError = (error: z.ZodError): ValidationError => {
+const formatZodError = (error: z.ZodError): {
+  success: false;
+  statusCode: number;
+  message: string;
+  errors: Record<string, string>;
+  stack: null;
+} => {
   const errors: Record<string, string> = {};
   error.errors.forEach((err) => {
     const path = err.path.join('.');
@@ -160,7 +104,7 @@ const formatZodError = (error: z.ZodError): ValidationError => {
 // Validation function for create operation
 const validateCreateSales = (
   data: unknown
-): ValidationSuccess<z.infer<typeof createSchema>> | ValidationError => {
+): { success: true; data: z.infer<typeof createSchema> } | ReturnType<typeof formatZodError> => {
   try {
     const result = createSchema.parse(data);
     return {
@@ -178,7 +122,7 @@ const validateCreateSales = (
 // Validation function for update operation
 const validateUpdateSale = (
   data: unknown
-): ValidationSuccess<Partial<z.infer<typeof baseSaleObjectSchema>>> | ValidationError => {
+): { success: true; data: Partial<z.infer<typeof baseSaleObjectSchema>> } | ReturnType<typeof formatZodError> => {
   try {
     const result = updateSchema.parse(data);
     return {

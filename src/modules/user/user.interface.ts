@@ -1,13 +1,21 @@
+import { Schema } from 'mongoose';
 import { TUserRole, TUserStatus } from '../../constant/userRole';
 
+export interface IBusinessInfo {
+  businessName?: string;
+  businessAddress?: string;
+  businessPhone?: string;
+}
+
 export interface IUser {
+  _id?: Schema.Types.ObjectId;
   name: string;
   email: string;
+  password: string;
   title?: string;
   description?: string;
-  role: TUserRole;
   avatar?: string;
-  password: string;
+  role: TUserRole;
   status: TUserStatus;
   address?: string;
   phone?: string;
@@ -17,5 +25,6 @@ export interface IUser {
   twitter?: string;
   linkedin?: string;
   instagram?: string;
-  createdBy?: string;
+  businessInfo?: IBusinessInfo;
+  createdBy?: Schema.Types.ObjectId;
 }

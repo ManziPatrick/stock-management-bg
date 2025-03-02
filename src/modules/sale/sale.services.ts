@@ -1,158 +1,117 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
-import sortAndPaginatePipeline from '../../lib/sortAndPaginate.pipeline';
+import mongoose, { Types } from 'mongoose';
 import BaseServices from '../baseServices';
-import Sale from './sale.model';
+import SaleTransaction from './sale.model';
 import Product from '../product/product.model';
-import { Expense } from '../expenses/expenseModel';
 import CustomError from '../../errors/customError';
+import { IProductSale } from './sale.interface';
 
-interface ProductPayload {
-  product: string;
-  productName: string;
-  SellingPrice: number;
-  productPrice: number;
-  quantity: number;
-}
+import sortAndPaginatePipeline from '../../lib/sortAndPaginate.pipeline';
 
-interface SalePayload {
+import Sale from './sale.model';
+
+import { Expense } from '../expenses/expenseModel';
+
+interface CreateSalePayload {
   buyerName: string;
   date: string;
   paymentMode: 'cash' | 'momo' | 'cheque' | 'transfer';
   paymentDetails: {
     mode: string;
   };
-  products: ProductPayload[];
+  products: IProductSale[];
 }
 
 class SaleServices extends BaseServices<any> {
-  constructor(model: any, modelName: string) {
-    super(model, modelName);
+  constructor() {
+    super(SaleTransaction, 'SaleTransaction');
   }
 
-  async processSingleSale(item: ProductPayload, transactionId: Types.ObjectId, userId: string, saleDate: Date) {
-    if (!item.product) {
-      throw new CustomError(400, 'Product is required');
+  private async processProduct(product: IProductSale): Promise<IProductSale> {
+    const existingProduct = await Product.findById(product.product);
+    if (!existingProduct) {
+      throw new CustomError(404, `Product not found: ${product.product}`);
     }
-  
-    const product = await Product.findById(item.product);
-    if (!product) {
-      throw new CustomError(404, `Product not found: ${item.product}`);
+
+    if (product.quantity > existingProduct.stock) {
+      throw new CustomError(400, `Insufficient stock for ${existingProduct.name}`);
     }
-  
-    // Check for sufficient stock
-    if (item.quantity > product.stock) {
-      throw new CustomError(400, `Only ${product.stock} items of ${product.name} are available in stock`);
-    }
-  
-    // Decrement stock
-    await Product.findByIdAndUpdate(product._id, { $inc: { stock: -item.quantity } });
-  
-    // Calculate total price for this item
-    const totalPrice = item.quantity * item.SellingPrice;
-  
-    // Create sale record
-    const sale = await Sale.create({
-      user: userId,
-      product: item.product,
-      productName: item.productName,
-      productPrice: item.productPrice,
-      SellingPrice: item.SellingPrice,
-      quantity: item.quantity,
-      totalPrice,
-      transactionId,
-      date: saleDate
-    });
-    
-    return sale;
+
+    await Product.findByIdAndUpdate(
+      existingProduct._id,
+      { $inc: { stock: -product.quantity } }
+    );
+
+    return {
+      ...product,
+      productName: existingProduct.name,
+      productPrice: existingProduct.price
+    };
   }
 
-  async create(payload: SalePayload, userId: string) {
+  async create(payload: CreateSalePayload, userId: string) {
     try {
       const transactionId = new mongoose.Types.ObjectId();
       const saleDate = new Date(payload.date);
-      
-      // Process each product in the array
-      const salePromises = payload.products.map(item => 
-        this.processSingleSale(item, transactionId, userId, saleDate)
-      );
-      
-      const salesResults = await Promise.all(salePromises);
 
-      // Calculate transaction summary
-      const transactionSummary = {
-        transactionId,
-        totalItems: salesResults.length,
-        totalQuantity: salesResults.reduce((sum, sale) => sum + sale.quantity, 0),
-        totalAmount: salesResults.reduce((sum, sale) => sum + sale.totalPrice, 0),
-        totalProfit: salesResults.reduce(
-          (sum, sale) => sum + (sale.quantity * (sale.SellingPrice - sale.productPrice)),
-          0
-        ),
-        paymentMode: payload.paymentMode,
-        paymentDetails: payload.paymentDetails,
+      // Process all products
+      const processedProducts = await Promise.all(
+        payload.products.map(product => this.processProduct(product))
+      );
+
+      // Calculate total amount
+      const totalAmount = processedProducts.reduce(
+        (sum, product) => sum + (product.quantity * product.SellingPrice),
+        0
+      );
+
+      // Create sale transaction
+      const saleTransaction = await SaleTransaction.create({
+        user: userId,
         buyerName: payload.buyerName,
         date: saleDate,
-        createdAt: new Date()
-      };
-
-      // Calculate statistics
-      const totalRevenue = await this.calculateTotalStockRevenue();
-      
-      // Daily payment stats
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dailyPaymentStats = await this.calculatePaymentStats({
-        createdAt: { $gte: today, $lt: tomorrow }
+        paymentMode: payload.paymentMode,
+        paymentDetails: payload.paymentDetails,
+        products: processedProducts,
+        transactionId,
+        totalAmount
       });
 
-      // Monthly payment stats
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      const monthlyPaymentStats = await this.calculatePaymentStats({
-        createdAt: { $gte: startOfMonth, $lte: endOfMonth }
-      });
-
-      // All-time payment stats
-      const allTimePaymentStats = await this.calculatePaymentStats({});
-
-      // Recent sales
-      const recentSales = await this.model.aggregate([
-        { $sort: { createdAt: -1 } },
-        { $limit: 5 },
-        {
-          $project: {
-            _id: 1,
-            transactionId: 1,
-            productName: 1,
-            buyerName: 1,
-            quantity: 1,
-            totalPrice: 1,
-            paymentMode: 1,
-            createdAt: 1,
-            profit: { $multiply: ['$quantity', { $subtract: ['$SellingPrice', '$productPrice'] }] }
-          }
-        }
-      ]);
+      // Calculate additional statistics
+      const statistics = await this.calculateStatistics(userId);
 
       return {
-        transactionSummary,
-        sales: salesResults,
-        totalRevenue: totalRevenue[0],
-        paymentStats: {
-          daily: dailyPaymentStats[0] || { cashTotal: 0, momoTotal: 0, chequeTotal: 0, transferTotal: 0, totalAmount: 0 },
-          monthly: monthlyPaymentStats[0] || { cashTotal: 0, momoTotal: 0, chequeTotal: 0, transferTotal: 0, totalAmount: 0 },
-          allTime: allTimePaymentStats[0] || { cashTotal: 0, momoTotal: 0, chequeTotal: 0, transferTotal: 0, totalAmount: 0 }
-        },
-        recentSales
+        transaction: saleTransaction,
+        statistics
       };
     } catch (error: any) {
-      console.error('Sale creation error:', error);
-      throw new CustomError(400, error.message || 'Sale creation failed');
+      throw new CustomError(400, error.message || 'Failed to create sale');
     }
   }
 
+  private async calculateStatistics(userId: string) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dailyStats = await SaleTransaction.aggregate([
+      {
+        $match: {
+          user: new Types.ObjectId(userId),
+          date: { $gte: today }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSales: { $sum: '$totalAmount' },
+          transactionCount: { $sum: 1 }
+        }
+      }
+    ]);
+
+    return {
+      daily: dailyStats[0] || { totalSales: 0, transactionCount: 0 }
+    };
+  }
   // Existing calculation methods remain unchanged
   async calculateTotalStockRevenue() {
     return await Product.aggregate([
@@ -986,5 +945,5 @@ async getSalesByTransactionId(transactionId: string) {
   
 
 
-const saleServices = new SaleServices(Sale, 'Sale');
+const saleServices = new SaleServices();
 export default saleServices;
