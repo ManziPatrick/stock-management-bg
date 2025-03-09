@@ -32,7 +32,12 @@ const userSchema = new mongoose_1.Schema({
     twitter: { type: String },
     linkedin: { type: String },
     instagram: { type: String },
-    createdBy: { type: mongoose_1.Schema.Types.ObjectId, ref: 'user', required: true }
+    businessInfo: {
+        businessName: { type: String },
+        businessAddress: { type: String },
+        businessPhone: { type: String }
+    },
+    createdBy: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User' } // Reference to the user who created this account
 }, { timestamps: true });
 userSchema.pre('save', function (next) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -42,5 +47,5 @@ userSchema.pre('save', function (next) {
         next();
     });
 });
-const User = (0, mongoose_1.model)('user', userSchema);
+const User = (0, mongoose_1.model)('User', userSchema);
 exports.default = User;

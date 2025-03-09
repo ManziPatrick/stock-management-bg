@@ -33,30 +33,52 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-// sale.model.ts
+exports.CreditModel = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
-const productSaleSchema = new mongoose_1.Schema({
-    product: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
-    productName: { type: String, required: true },
-    productPrice: { type: Number, required: true },
-    SellingPrice: { type: Number, required: true },
-    quantity: { type: Number, required: true }
-});
-const saleTransactionSchema = new mongoose_1.Schema({
-    user: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
-    buyerName: { type: String, required: true },
-    date: { type: Date, required: true },
-    paymentMode: {
+const CreditSchema = new mongoose_1.Schema({
+    productId: {
         type: String,
-        enum: ['cash', 'momo', 'cheque', 'transfer'],
-        default: 'cash'
+        required: true
     },
-    paymentDetails: {
-        mode: { type: String, required: true }
+    totalAmount: {
+        type: Number,
+        required: true,
+        min: 0
     },
-    products: [productSaleSchema],
-    transactionId: { type: mongoose_1.Schema.Types.ObjectId, required: true, index: true },
-    totalAmount: { type: Number, required: true }
-}, { timestamps: true });
-const SaleTransaction = mongoose_1.default.model('SaleTransaction', saleTransactionSchema);
-exports.default = SaleTransaction;
+    downPayment: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    creditAmount: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    customerDetails: {
+        name: {
+            type: String,
+            required: true
+        },
+        phone: {
+            type: String,
+            required: true
+        },
+        email: {
+            type: String,
+            required: true
+        }
+    },
+    paymentDueDate: {
+        type: String,
+        required: true
+    },
+    status: {
+        type: String,
+        enum: ['PENDING', 'COMPLETED', 'REJECTED'],
+        default: 'PENDING'
+    }
+}, {
+    timestamps: true
+});
+exports.CreditModel = mongoose_1.default.model('Credit', CreditSchema);

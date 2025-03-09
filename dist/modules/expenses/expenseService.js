@@ -18,23 +18,104 @@ const expenseModel_1 = require("./expenseModel");
  */
 const getAllExpenses = (_a) => __awaiter(void 0, [_a], void 0, function* ({ page = 1, limit = 10, search = '', status = 'ACTIVE', }) {
     const query = { status };
-    // Add search filter if search term is provided
     if (search) {
-        query['name'] = { $regex: search, $options: 'i' }; // Example search filter for "name" field
+        query['name'] = { $regex: search, $options: 'i' };
     }
     try {
-        // Fetch expenses with pagination and filtering
+        // Get current date components
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1;
+        const currentDay = now.getDate();
+        // Fetch paginated expenses
         const expenses = yield expenseModel_1.Expense.find(query)
-            .skip((page - 1) * limit) // Skip items based on the page number and limit
-            .limit(limit) // Limit the number of items per page
+            .skip((page - 1) * limit)
+            .limit(limit)
             .exec();
-        // Fetch the total count of expenses matching the query for pagination
         const totalExpenses = yield expenseModel_1.Expense.countDocuments(query);
+        // Get overall statistics
+        const [stats] = yield expenseModel_1.Expense.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: null,
+                    totalExpenses: { $sum: '$amount' },
+                    totalCount: { $count: {} },
+                    averageAmount: { $avg: '$amount' },
+                    minAmount: { $min: '$amount' },
+                    maxAmount: { $max: '$amount' }
+                }
+            }
+        ]);
+        // Get daily statistics
+        const dailyStats = yield expenseModel_1.Expense.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$date' },
+                        month: { $month: '$date' },
+                        day: { $dayOfMonth: '$date' }
+                    },
+                    dailyTotal: { $sum: '$amount' },
+                    count: { $count: {} }
+                }
+            },
+            { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+        ]);
+        // Get monthly statistics
+        const monthlyStats = yield expenseModel_1.Expense.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$date' },
+                        month: { $month: '$date' }
+                    },
+                    monthlyTotal: { $sum: '$amount' },
+                    count: { $count: {} }
+                }
+            },
+            { $sort: { '_id.year': -1, '_id.month': -1 } }
+        ]);
+        // Get yearly statistics
+        const yearlyStats = yield expenseModel_1.Expense.aggregate([
+            { $match: query },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$date' }
+                    },
+                    yearlyTotal: { $sum: '$amount' },
+                    count: { $count: {} }
+                }
+            },
+            { $sort: { '_id.year': -1 } }
+        ]);
+        // Get recent purchases
+        const recentPurchases = yield expenseModel_1.Expense.find(query)
+            .sort({ date: -1 })
+            .limit(5)
+            .select('_id sellerName amount date status')
+            .lean();
         return {
-            expenses,
-            totalExpenses,
-            totalPages: Math.ceil(totalExpenses / limit),
-            currentPage: page,
+            statusCode: 200,
+            success: true,
+            message: "Purchases retrieved successfully!",
+            data: expenses,
+            meta: {
+                page,
+                limit,
+                total: totalExpenses,
+                totalPage: Math.ceil(totalExpenses / limit),
+                totalExpenses: {
+                    stats,
+                    dailyStats,
+                    monthlyStats,
+                    yearlyStats,
+                    recentPurchases
+                }
+            }
         };
     }
     catch (error) {

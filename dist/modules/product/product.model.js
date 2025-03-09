@@ -34,15 +34,68 @@ const measurementSchema = new mongoose_1.Schema({
     }
 });
 const productSchema = new mongoose_1.Schema({
-    user: { type: mongoose_1.Schema.Types.ObjectId, required: true, ref: 'user' },
-    seller: { type: mongoose_1.Schema.Types.ObjectId, required: true, ref: 'Seller' },
-    category: { type: mongoose_1.Schema.Types.ObjectId, required: true, ref: 'category' },
-    name: { type: String, required: true },
+    user: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        required: true,
+        ref: 'user'
+    },
+    seller: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        required: true,
+        ref: 'Seller'
+    },
+    category: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        required: true,
+        ref: 'category'
+    },
+    name: {
+        type: String,
+        required: true,
+        trim: true
+    },
     measurement: measurementSchema,
-    brand: { type: mongoose_1.Schema.Types.ObjectId, ref: 'brand' },
-    price: { type: Number, required: true },
-    stock: { type: Number, required: true },
-    description: { type: String }
-}, { timestamps: true });
-const Product = (0, mongoose_1.model)('product', productSchema);
+    brand: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'brand'
+    },
+    price: {
+        type: Number,
+        required: true,
+        min: [0, 'Price cannot be negative']
+    },
+    stock: {
+        type: Number,
+        required: true,
+        min: [0, 'Stock cannot be negative']
+    },
+    description: {
+        type: String,
+        trim: true
+    },
+    images: {
+        type: [String],
+        required: [true, 'At least one product image is required'],
+        validate: {
+            validator: function (v) {
+                return v.length > 0 && v.length <= 5;
+            },
+            message: 'Product must have between 1 and 5 images'
+        }
+    }
+}, {
+    timestamps: true,
+    toJSON: {
+        virtuals: true
+    }
+});
+// Add indices for common queries
+productSchema.index({ name: 1 });
+productSchema.index({ category: 1 });
+productSchema.index({ seller: 1 });
+productSchema.index({ price: 1 });
+// Add a compound index for category and price for filtered searches
+productSchema.index({ category: 1, price: 1 });
+// Prevent re-compilation of the model
+const Product = (0, mongoose_1.model)('Product', productSchema);
 exports.default = Product;

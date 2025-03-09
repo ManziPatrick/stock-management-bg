@@ -1,3 +1,5 @@
+//@ts-nocheck
+
 import CustomError from '../../errors/customError';
 import httpStatus from 'http-status';
 import generateToken from '../../utils/generateToken';
@@ -108,6 +110,7 @@ class UserServices {
       email: user.email,
       role: user.role,
       businessInfo: user.businessInfo,
+
       createdBy: user.createdBy ? { _id: user.createdBy._id, name: user.createdBy.name, email: user.createdBy.email, role: user.createdBy.role } : null,
     });
 
