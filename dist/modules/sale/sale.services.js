@@ -156,18 +156,18 @@ class SaleServices extends baseServices_1.default {
                     $group: {
                         _id: null,
                         cashTotal: {
-                            $sum: { $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalPrice', 0] }
+                            $sum: { $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalAmount', 0] }
                         },
                         momoTotal: {
-                            $sum: { $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalPrice', 0] }
+                            $sum: { $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalAmount', 0] }
                         },
                         chequeTotal: {
-                            $sum: { $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalPrice', 0] }
+                            $sum: { $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalAmount', 0] }
                         },
                         transferTotal: {
-                            $sum: { $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalPrice', 0] }
+                            $sum: { $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalAmount', 0] }
                         },
-                        totalAmount: { $sum: '$totalPrice' }
+                        totalAmount: { $sum: '$totalAmount' }
                     }
                 }
             ]);
@@ -495,7 +495,7 @@ class SaleServices extends baseServices_1.default {
                     transactionId,
                     totalItems: sales.length,
                     totalQuantity: sales.reduce((sum, sale) => sum + (sale.quantity || 0), 0),
-                    totalAmount: sales.reduce((sum, sale) => sum + (sale.totalPrice || 0), 0),
+                    totalAmount: sales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0), // Changed from totalPrice to totalAmount
                     totalProfit: sales.reduce((sum, sale) => {
                         if (sale.SellingPrice && sale.productPrice && sale.quantity) {
                             return sum + (sale.quantity * (sale.SellingPrice - sale.productPrice));
@@ -523,34 +523,40 @@ class SaleServices extends baseServices_1.default {
             }
         });
     }
+    // In the getDailyStats method
     getDailyStats(matchStage) {
         return __awaiter(this, void 0, void 0, function* () {
             return this.model.aggregate([
                 matchStage,
-                {
-                    $unwind: "$products"
-                },
+                // First group by transaction to get accurate transaction counts
                 {
                     $group: {
                         _id: {
+                            transactionId: "$transactionId",
                             year: { $year: "$date" },
                             month: { $month: "$date" },
                             day: { $dayOfMonth: "$date" },
                             paymentMode: "$paymentMode"
                         },
-                        total: { $sum: "$totalAmount" },
-                        count: { $sum: 1 },
-                        profit: {
-                            $sum: {
-                                $multiply: [
-                                    "$products.quantity",
-                                    { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
-                                ]
-                            }
-                        }
+                        // Sum totalAmount without unwinding products (one sum per transaction)
+                        total: { $first: "$totalAmount" }, // Use first since totalAmount is same for the transaction
+                        count: { $sum: 1 } // Count transactions
                     }
                 },
-                // Rest of aggregation remains the same
+                // Then group by date and payment mode
+                {
+                    $group: {
+                        _id: {
+                            year: "$_id.year",
+                            month: "$_id.month",
+                            day: "$_id.day",
+                            paymentMode: "$_id.paymentMode"
+                        },
+                        total: { $sum: "$total" },
+                        count: { $sum: "$count" }
+                    }
+                },
+                // Finally group just by date to get all payment modes
                 {
                     $group: {
                         _id: {
@@ -559,7 +565,7 @@ class SaleServices extends baseServices_1.default {
                             day: "$_id.day"
                         },
                         dailyTotal: { $sum: "$total" },
-                        dailyProfit: { $sum: "$profit" },
+                        transactionCount: { $sum: "$count" },
                         payments: {
                             $push: {
                                 mode: "$_id.paymentMode",
@@ -567,7 +573,6 @@ class SaleServices extends baseServices_1.default {
                                 count: "$count"
                             }
                         },
-                        // Payment mode totals remain the same
                         cashTotal: {
                             $sum: {
                                 $cond: [
@@ -606,45 +611,123 @@ class SaleServices extends baseServices_1.default {
                         }
                     }
                 },
+                // Now calculate profit in a separate stage after accurately counting transactions
+                {
+                    $lookup: {
+                        from: "saletransactions", // The actual collection name in MongoDB
+                        let: {
+                            year: "$_id.year",
+                            month: "$_id.month",
+                            day: "$_id.day"
+                        },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: [{ $year: "$date" }, "$$year"] },
+                                            { $eq: [{ $month: "$date" }, "$$month"] },
+                                            { $eq: [{ $dayOfMonth: "$date" }, "$$day"] }
+                                        ]
+                                    }
+                                }
+                            },
+                            { $unwind: "$products" },
+                            {
+                                $group: {
+                                    _id: null,
+                                    dailyProfit: {
+                                        $sum: {
+                                            $multiply: [
+                                                "$products.quantity",
+                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        ],
+                        as: "profitData"
+                    }
+                },
+                {
+                    $addFields: {
+                        dailyProfit: {
+                            $cond: {
+                                if: { $gt: [{ $size: "$profitData" }, 0] },
+                                then: { $arrayElemAt: ["$profitData.dailyProfit", 0] },
+                                else: 0
+                            }
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 1,
+                        dailyTotal: 1,
+                        dailyProfit: 1,
+                        transactionCount: 1,
+                        payments: 1,
+                        cashTotal: 1,
+                        momoTotal: 1,
+                        chequeTotal: 1,
+                        transferTotal: 1
+                    }
+                },
                 { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
             ]);
         });
     }
-    // Fixed Monthly Stats Method
     getMonthlyStats(matchStage) {
         return __awaiter(this, void 0, void 0, function* () {
             return this.model.aggregate([
                 matchStage,
+                // First group by transaction
                 {
                     $group: {
                         _id: {
-                            year: { $year: '$date' },
-                            month: { $month: '$date' },
-                            paymentMode: '$paymentMode'
+                            transactionId: "$transactionId",
+                            year: { $year: "$date" },
+                            month: { $month: "$date" },
+                            paymentMode: "$paymentMode"
                         },
-                        total: { $sum: '$totalAmount' },
+                        total: { $first: "$totalAmount" },
                         count: { $sum: 1 }
                     }
                 },
+                // Then group by month and payment mode
                 {
                     $group: {
                         _id: {
-                            year: '$_id.year',
-                            month: '$_id.month'
+                            year: "$_id.year",
+                            month: "$_id.month",
+                            paymentMode: "$_id.paymentMode"
                         },
-                        monthlyTotal: { $sum: '$total' },
+                        total: { $sum: "$total" },
+                        count: { $sum: "$count" }
+                    }
+                },
+                // Finally group just by month
+                {
+                    $group: {
+                        _id: {
+                            year: "$_id.year",
+                            month: "$_id.month"
+                        },
+                        monthlyTotal: { $sum: "$total" },
+                        transactionCount: { $sum: "$count" },
                         payments: {
                             $push: {
-                                mode: '$_id.paymentMode',
-                                total: '$total',
-                                count: '$count'
+                                mode: "$_id.paymentMode",
+                                total: "$total",
+                                count: "$count"
                             }
                         },
                         cashTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'cash'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "cash"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -652,8 +735,8 @@ class SaleServices extends baseServices_1.default {
                         momoTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'momo'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "momo"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -661,8 +744,8 @@ class SaleServices extends baseServices_1.default {
                         chequeTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'cheque'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "cheque"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -670,49 +753,126 @@ class SaleServices extends baseServices_1.default {
                         transferTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'transfer'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "transfer"] },
+                                    "$total",
                                     0
                                 ]
                             }
                         }
                     }
                 },
-                { $sort: { '_id.year': -1, '_id.month': -1 } }
+                // Calculate profit separately
+                {
+                    $lookup: {
+                        from: "saletransactions",
+                        let: {
+                            year: "$_id.year",
+                            month: "$_id.month"
+                        },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: [{ $year: "$date" }, "$$year"] },
+                                            { $eq: [{ $month: "$date" }, "$$month"] }
+                                        ]
+                                    }
+                                }
+                            },
+                            { $unwind: "$products" },
+                            {
+                                $group: {
+                                    _id: null,
+                                    monthlyProfit: {
+                                        $sum: {
+                                            $multiply: [
+                                                "$products.quantity",
+                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        ],
+                        as: "profitData"
+                    }
+                },
+                {
+                    $addFields: {
+                        monthlyProfit: {
+                            $cond: {
+                                if: { $gt: [{ $size: "$profitData" }, 0] },
+                                then: { $arrayElemAt: ["$profitData.monthlyProfit", 0] },
+                                else: 0
+                            }
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 1,
+                        monthlyTotal: 1,
+                        monthlyProfit: 1,
+                        transactionCount: 1,
+                        payments: 1,
+                        cashTotal: 1,
+                        momoTotal: 1,
+                        chequeTotal: 1,
+                        transferTotal: 1
+                    }
+                },
+                { $sort: { "_id.year": -1, "_id.month": -1 } }
             ]);
         });
     }
-    // Fixed Yearly Stats Method
     getYearlyStats(matchStage) {
         return __awaiter(this, void 0, void 0, function* () {
             return this.model.aggregate([
                 matchStage,
+                // First group by transaction
                 {
                     $group: {
                         _id: {
-                            year: { $year: '$date' },
-                            paymentMode: '$paymentMode'
+                            transactionId: "$transactionId",
+                            year: { $year: "$date" },
+                            paymentMode: "$paymentMode"
                         },
-                        total: { $sum: '$totalAmount' },
+                        total: { $first: "$totalAmount" },
                         count: { $sum: 1 }
                     }
                 },
+                // Then group by year and payment mode
                 {
                     $group: {
-                        _id: { year: '$_id.year' },
-                        yearlyTotal: { $sum: '$total' },
+                        _id: {
+                            year: "$_id.year",
+                            paymentMode: "$_id.paymentMode"
+                        },
+                        total: { $sum: "$total" },
+                        count: { $sum: "$count" }
+                    }
+                },
+                // Finally group just by year
+                {
+                    $group: {
+                        _id: {
+                            year: "$_id.year"
+                        },
+                        yearlyTotal: { $sum: "$total" },
+                        transactionCount: { $sum: "$count" },
                         payments: {
                             $push: {
-                                mode: '$_id.paymentMode',
-                                total: '$total',
-                                count: '$count'
+                                mode: "$_id.paymentMode",
+                                total: "$total",
+                                count: "$count"
                             }
                         },
                         cashTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'cash'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "cash"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -720,8 +880,8 @@ class SaleServices extends baseServices_1.default {
                         momoTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'momo'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "momo"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -729,8 +889,8 @@ class SaleServices extends baseServices_1.default {
                         chequeTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'cheque'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "cheque"] },
+                                    "$total",
                                     0
                                 ]
                             }
@@ -738,15 +898,70 @@ class SaleServices extends baseServices_1.default {
                         transferTotal: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$_id.paymentMode', 'transfer'] },
-                                    '$total',
+                                    { $eq: ["$_id.paymentMode", "transfer"] },
+                                    "$total",
                                     0
                                 ]
                             }
                         }
                     }
                 },
-                { $sort: { '_id.year': -1 } }
+                // Calculate profit separately
+                {
+                    $lookup: {
+                        from: "saletransactions",
+                        let: { year: "$_id.year" },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $eq: [{ $year: "$date" }, "$$year"]
+                                    }
+                                }
+                            },
+                            { $unwind: "$products" },
+                            {
+                                $group: {
+                                    _id: null,
+                                    yearlyProfit: {
+                                        $sum: {
+                                            $multiply: [
+                                                "$products.quantity",
+                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                            ]
+                                        }
+                                    }
+                                }
+                            }
+                        ],
+                        as: "profitData"
+                    }
+                },
+                {
+                    $addFields: {
+                        yearlyProfit: {
+                            $cond: {
+                                if: { $gt: [{ $size: "$profitData" }, 0] },
+                                then: { $arrayElemAt: ["$profitData.yearlyProfit", 0] },
+                                else: 0
+                            }
+                        }
+                    }
+                },
+                {
+                    $project: {
+                        _id: 1,
+                        yearlyTotal: 1,
+                        yearlyProfit: 1,
+                        transactionCount: 1,
+                        payments: 1,
+                        cashTotal: 1,
+                        momoTotal: 1,
+                        chequeTotal: 1,
+                        transferTotal: 1
+                    }
+                },
+                { $sort: { "_id.year": -1 } }
             ]);
         });
     }
@@ -866,7 +1081,6 @@ class SaleServices extends baseServices_1.default {
                     $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 }
                 }
             ]);
-            // Combine sales and expenses data
             const enrichedStats = stats.map(stat => {
                 const matchingExpense = expenses.find(exp => exp._id.year === stat._id.year &&
                     exp._id.month === stat._id.month &&
@@ -897,31 +1111,43 @@ class SaleServices extends baseServices_1.default {
                     }
                 }
             };
+            // Update to match daily stats structure with products unwind
             const stats = yield this.model.aggregate([
                 matchStage,
                 {
+                    $unwind: "$products" // Unwind the products array
+                },
+                {
                     $group: {
                         _id: {
-                            year: { $year: '$createdAt' },
-                            month: { $month: '$createdAt' }
+                            year: { $year: "$createdAt" },
+                            month: { $month: "$createdAt" }
                         },
-                        totalQuantitySold: { $sum: '$quantity' },
-                        totalSaleAmount: { $sum: '$totalPrice' },
-                        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                        totalProductPrice: { $sum: '$productPrice' },
-                        profit: { $sum: { $subtract: ['$SellingPrice', '$productPrice'] } },
+                        totalQuantitySold: { $sum: "$products.quantity" },
+                        totalSaleAmount: { $sum: "$totalAmount" },
+                        totalSellingPrice: {
+                            $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] }
+                        },
+                        totalProductPrice: {
+                            $sum: { $multiply: ["$products.quantity", "$products.productPrice"] }
+                        },
                         totalMarginProfit: {
-                            $sum: { $multiply: ['$quantity', { $subtract: ['$SellingPrice', '$productPrice'] }] }
+                            $sum: {
+                                $multiply: [
+                                    "$products.quantity",
+                                    { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                ]
+                            }
                         },
-                        averageSaleAmount: { $avg: '$totalPrice' },
+                        averageSaleAmount: { $avg: "$totalAmount" },
                         totalCount: { $sum: 1 },
-                        cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalPrice', 0] } },
-                        momoTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalPrice', 0] } },
-                        chequeTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalPrice', 0] } },
-                        transferTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalPrice', 0] } }
+                        cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
+                        momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
+                        chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
+                        transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
                     }
                 },
-                { $sort: { '_id.year': -1, '_id.month': -1 } }
+                { $sort: { "_id.year": -1, "_id.month": -1 } }
             ]);
             // Get monthly expenses
             const expenses = yield expenseModel_1.Expense.aggregate([
@@ -1007,31 +1233,42 @@ class SaleServices extends baseServices_1.default {
                     }
                 }
             };
-            // Get yearly sales statistics
+            // Updated to match daily stats structure with products unwind
             const stats = yield this.model.aggregate([
                 matchStage,
                 {
+                    $unwind: "$products" // Unwind the products array
+                },
+                {
                     $group: {
                         _id: {
-                            year: { $year: '$createdAt' }
+                            year: { $year: "$createdAt" }
                         },
-                        totalQuantitySold: { $sum: '$quantity' },
-                        totalSaleAmount: { $sum: '$totalPrice' },
-                        totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
-                        totalProductPrice: { $sum: '$productPrice' },
-                        profit: { $sum: { $subtract: ['$SellingPrice', '$productPrice'] } },
+                        totalQuantitySold: { $sum: "$products.quantity" },
+                        totalSaleAmount: { $sum: "$totalAmount" },
+                        totalSellingPrice: {
+                            $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] }
+                        },
+                        totalProductPrice: {
+                            $sum: { $multiply: ["$products.quantity", "$products.productPrice"] }
+                        },
                         totalMarginProfit: {
-                            $sum: { $multiply: ['$quantity', { $subtract: ['$SellingPrice', '$productPrice'] }] }
+                            $sum: {
+                                $multiply: [
+                                    "$products.quantity",
+                                    { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                ]
+                            }
                         },
-                        averageSaleAmount: { $avg: '$totalPrice' },
+                        averageSaleAmount: { $avg: "$totalAmount" },
                         totalCount: { $sum: 1 },
-                        cashTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'cash'] }, '$totalPrice', 0] } },
-                        momoTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'momo'] }, '$totalPrice', 0] } },
-                        chequeTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'cheque'] }, '$totalPrice', 0] } },
-                        transferTotal: { $sum: { $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalPrice', 0] } }
+                        cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
+                        momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
+                        chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
+                        transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
                     }
                 },
-                { $sort: { '_id.year': -1 } }
+                { $sort: { "_id.year": -1 } }
             ]);
             // Get yearly expenses
             const expenses = yield expenseModel_1.Expense.aggregate([
