@@ -8,39 +8,22 @@ export interface IProformaItem {
   total: number;
 }
 
-interface IBillInfo {
-  name: string;
-  companyName: string;
-  streetAddress: string;
-  cityStateZip: string;
-  phone: string;
-}
-
 interface IInvoiceDetails {
   invoiceNo: string;
   invoiceDate: Date;
-  dueDate: Date;
 }
 
 interface ITotals {
-  subtotal: number;
-  tax: number;
-  discount: number;
-  total: number;
+  subtotal: string;
+  total: string;
 }
 
 export interface IProforma extends Document {
-  billFrom: IBillInfo;
-  billTo: IBillInfo;
+  clientName: string;
   date: Date;
-  dueDate: Date;
-  invoiceNumber: string; // Add this field
+  invoiceNumber: string;
   invoiceDetails: IInvoiceDetails;
   items: IProformaItem[];
-  terms: {
-    paymentDays: number;
-    lateFeePercentage: number;
-  };
   totals: ITotals;
   status: 'draft' | 'sent' | 'paid' | 'cancelled';
   createdAt: Date;

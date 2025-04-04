@@ -1,3 +1,5 @@
+
+// sale.interface.ts - Updated
 import { Types } from 'mongoose';
 
 export interface IProductSale {
@@ -19,6 +21,7 @@ export interface ISaleTransaction {
   products: IProductSale[];
   transactionId: Types.ObjectId;
   totalAmount: number;
+  status: 'pending' | 'approved' | 'rejected' | 'credit';
   createdAt: Date;
   updatedAt: Date;
 }

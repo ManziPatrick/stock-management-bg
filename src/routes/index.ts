@@ -10,6 +10,7 @@ import expenseRouter from '../modules/expenses/expenseRoutes';
 import { debitRoutes } from '../modules/debits/debits.routes';
 import Proforma from '../modules/Proforma/proforma.route';
 import {creditRoutes} from '../modules/credit/credit.routes'
+import deliveryNoteRoutes from '../modules/deliveryNote/Delivery.routes';
 
 const rootRouter = Router();
 
@@ -20,6 +21,7 @@ rootRouter.use('/categories', categoryRoutes);
 rootRouter.use('/brands', brandRoutes);
 rootRouter.use('/sellers', sellerRoutes);
 rootRouter.use('/expenses',expenseRouter);
+rootRouter.use('/delivery-notes', deliveryNoteRoutes);
 rootRouter.use('/proforma',Proforma);
 rootRouter.use('/debits', debitRoutes);
 rootRouter.use('/purchases', purchaseRoutes);

@@ -1,6 +1,5 @@
 import { IProforma } from './proforma.interface';
 import Proforma from './proforma.model';
-import Product from '../product/product.model';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -14,67 +13,35 @@ interface ProformaQueryParams {
 }
 
 export class ProformaService {
- 
-    private generateInvoiceNumber(): string {
-      return `INV${new Date().getFullYear()}${(new Date().getMonth() + 1)
-        .toString()
-        .padStart(2, '0')}-${uuidv4().slice(0, 8).toUpperCase()}`;
-    }
-  
-    async createProforma(proformaData: Partial<IProforma>): Promise<IProforma> {
-      const session = await mongoose.startSession();
-      session.startTransaction();
-  
-      try {
-        const invoiceNo = this.generateInvoiceNumber();
-        console.log('invoiceNo', invoiceNo);
-  
-        const issueDate = proformaData.date || new Date();
-        const paymentDays = proformaData.terms?.paymentDays || 30;
-        const dueDate = proformaData.dueDate || new Date(issueDate.getTime() + (paymentDays * 24 * 60 * 60 * 1000));
-  
-        const preparedData = {
-          ...proformaData,
-          date: issueDate,
-          dueDate: dueDate,
-          invoiceNumber: invoiceNo,
-          invoiceDetails: {
-            invoiceNo: invoiceNo,
-            invoiceDate: issueDate,
-            dueDate: dueDate
-          },
-          terms: {
-            paymentDays: paymentDays,
-            lateFeePercentage: proformaData.terms?.lateFeePercentage || 5
-          }
-        };
-  
-        // Validate product stock but do NOT reduce quantity
-        if (preparedData.items && preparedData.items.length > 0) {
-          for (const item of preparedData.items) {
-            const product = await Product.findById(item.product).session(session);
-            if (!product) {
-              throw new Error(`Product ${item.product} not found`);
-            }
-            if (product.stock < item.quantity) {
-              throw new Error(`Insufficient stock for product ${product.name}`);
-            }
-          }
+  private generateInvoiceNumber(): string {
+    return `INV${new Date().getFullYear()}${(new Date().getMonth() + 1)
+      .toString()
+      .padStart(2, '0')}-${uuidv4().slice(0, 8).toUpperCase()}`;
+  }
+
+  async createProforma(proformaData: Partial<IProforma>): Promise<IProforma> {
+    try {
+      const invoiceNo = this.generateInvoiceNumber();
+      
+      // Prepare the proforma data with generated invoice number
+      const preparedData = {
+        ...proformaData,
+        invoiceNumber: invoiceNo,
+        date: new Date(),
+        status: 'draft',
+        invoiceDetails: {
+          invoiceNo: invoiceNo,
+          invoiceDate: new Date()
         }
-  
-        const proforma = new Proforma(preparedData);
-        await proforma.save({ session });
-        await session.commitTransaction();
-        return proforma;
-      } catch (error) {
-        await session.abortTransaction();
-        throw error;
-      } finally {
-        session.endSession();
-      }
+      };
+
+      const proforma = new Proforma(preparedData);
+      await proforma.save();
+      return proforma;
+    } catch (error) {
+      throw error;
     }
-  
-  
+  }
 
   async getAllProformas(queryParams: ProformaQueryParams) {
     const { page = 1, limit = 10, status, search, startDate, endDate } = queryParams;
@@ -87,8 +54,7 @@ export class ProformaService {
 
     if (search) {
       query.$or = [
-        { 'billTo.name': { $regex: search, $options: 'i' } },
-        { 'billFrom.name': { $regex: search, $options: 'i' } },
+        { clientName: { $regex: search, $options: 'i' } },
         { invoiceNumber: { $regex: search, $options: 'i' } },
         { 'invoiceDetails.invoiceNo': { $regex: search, $options: 'i' } }
       ];
@@ -107,7 +73,7 @@ export class ProformaService {
       Proforma.find(query)
         .populate({
           path: 'items.product',
-          select: 'name price stock'
+          select: 'name price'
         })
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -143,11 +109,8 @@ export class ProformaService {
   }
 
   async update(id: string, updateData: Partial<IProforma>): Promise<IProforma> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
-      const proforma = await Proforma.findById(id).session(session);
+      const proforma = await Proforma.findById(id);
       if (!proforma) {
         throw new Error('Proforma not found');
       }
@@ -157,70 +120,24 @@ export class ProformaService {
         throw new Error('Invoice number cannot be modified');
       }
 
-      // If updating items, check and update product stock
-      if (updateData.items) {
-        // Restore original stock
-        for (const item of proforma.items) {
-          const product = await Product.findById(item.product).session(session);
-          if (product) {
-            product.stock += item.quantity;
-            await product.save({ session });
-          }
-        }
-
-        // Validate and update new stock
-        for (const item of updateData.items) {
-          const product = await Product.findById(item.product).session(session);
-          if (!product) {
-            throw new Error(`Product ${item.product} not found`);
-          }
-          if (product.stock < item.quantity) {
-            throw new Error(`Insufficient stock for product ${product.name}`);
-          }
-          product.stock -= item.quantity;
-          await product.save({ session });
-        }
-      }
-
       // Update the proforma
       Object.assign(proforma, updateData);
-      await proforma.save({ session });
-      
-      await session.commitTransaction();
+      await proforma.save();
       return proforma;
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 
   async delete(id: string): Promise<void> {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
-      const proforma = await Proforma.findById(id).session(session);
+      const proforma = await Proforma.findById(id);
       if (!proforma) throw new Error('Proforma not found');
       if (proforma.status !== 'draft') throw new Error('Only draft Proformas can be deleted');
 
-      // Restore product stock
-      for (const item of proforma.items) {
-        const product = await Product.findById(item.product).session(session);
-        if (product) {
-          product.stock += item.quantity;
-          await product.save({ session });
-        }
-      }
-
-      await proforma.deleteOne({ session });
-      await session.commitTransaction();
+      await proforma.deleteOne();
     } catch (error) {
-      await session.abortTransaction();
       throw error;
-    } finally {
-      session.endSession();
     }
   }
 }

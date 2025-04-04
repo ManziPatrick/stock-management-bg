@@ -294,6 +294,7 @@ class SaleServices extends BaseServices<any> {
       this.getYearlyStats(matchStage),
       this.getRecentSales(matchStage)
     ]);
+
     
     // Add expenses to dailyStats
     const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats, userId);
@@ -1234,7 +1235,27 @@ const stats = await this.model.aggregate([
       data: enrichedStats
     };
   }
-  
+
+  async updateStatus(id: string, status: 'pending' | 'approved' | 'rejected' | 'credit') {
+  try {
+    const saleTransaction = await this.model.findById(id);
+    
+    if (!saleTransaction) {
+      throw new CustomError(404, 'Sale transaction not found');
+    }
+    
+    // Update the status
+    const updatedTransaction = await this.model.findByIdAndUpdate(
+      id,
+      { $set: { status } },
+      { new: true }
+    );
+    
+    return updatedTransaction;
+  } catch (error: any) {
+    throw new CustomError(400, error.message || 'Failed to update sale status');
+  }
+}
 
 
 

@@ -1,5 +1,3 @@
-
-// sale.model.ts
 import mongoose, { Schema } from 'mongoose';
 import { ISaleTransaction } from './sale.interface';
 
@@ -26,7 +24,12 @@ const saleTransactionSchema = new Schema<ISaleTransaction>(
     },
     products: [productSaleSchema],
     transactionId: { type: Schema.Types.ObjectId, required: true, index: true },
-    totalAmount: { type: Number, required: true }
+    totalAmount: { type: Number, required: true },
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected','credit'],
+      default: 'pending'
+    }
   },
   { timestamps: true }
 );
