@@ -63,6 +63,24 @@ class SaleController {
                 data: result
             });
         }));
+        this.updateStatus = (0, asyncHandler_1.default)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            const { id } = req.params;
+            const { status } = req.body;
+            if (!['pending', 'approved', 'rejected', 'credit'].includes(status)) {
+                return (0, sendResponse_1.default)(res, {
+                    statusCode: http_status_1.default.BAD_REQUEST,
+                    success: false,
+                    message: 'Invalid status value'
+                });
+            }
+            const result = yield sale_services_1.default.updateStatus(id, status);
+            return (0, sendResponse_1.default)(res, {
+                statusCode: http_status_1.default.OK,
+                success: true,
+                message: `Sale ${status} successfully`,
+                data: result
+            });
+        }));
         this.delete = (0, asyncHandler_1.default)((req, res) => __awaiter(this, void 0, void 0, function* () {
             const { id } = req.params;
             yield sale_services_1.default.delete(id);

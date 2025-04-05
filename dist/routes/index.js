@@ -15,6 +15,7 @@ const expenseRoutes_1 = __importDefault(require("../modules/expenses/expenseRout
 const debits_routes_1 = require("../modules/debits/debits.routes");
 const proforma_route_1 = __importDefault(require("../modules/Proforma/proforma.route"));
 const credit_routes_1 = require("../modules/credit/credit.routes");
+const Delivery_routes_1 = __importDefault(require("../modules/deliveryNote/Delivery.routes"));
 const rootRouter = (0, express_1.Router)();
 rootRouter.use('/users', user_routes_1.default);
 rootRouter.use('/products', product_routes_1.default);
@@ -23,6 +24,7 @@ rootRouter.use('/categories', category_routes_1.default);
 rootRouter.use('/brands', brand_routes_1.default);
 rootRouter.use('/sellers', seller_routes_1.default);
 rootRouter.use('/expenses', expenseRoutes_1.default);
+rootRouter.use('/delivery-notes', Delivery_routes_1.default);
 rootRouter.use('/proforma', proforma_route_1.default);
 rootRouter.use('/debits', debits_routes_1.debitRoutes);
 rootRouter.use('/purchases', purchase_routes_1.default);

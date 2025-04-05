@@ -33,7 +33,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-// sale.model.ts
 const mongoose_1 = __importStar(require("mongoose"));
 const productSaleSchema = new mongoose_1.Schema({
     product: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Product', required: true },
@@ -56,7 +55,12 @@ const saleTransactionSchema = new mongoose_1.Schema({
     },
     products: [productSaleSchema],
     transactionId: { type: mongoose_1.Schema.Types.ObjectId, required: true, index: true },
-    totalAmount: { type: Number, required: true }
+    totalAmount: { type: Number, required: true },
+    status: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected', 'credit'],
+        default: 'pending'
+    }
 }, { timestamps: true });
 const SaleTransaction = mongoose_1.default.model('SaleTransaction', saleTransactionSchema);
 exports.default = SaleTransaction;

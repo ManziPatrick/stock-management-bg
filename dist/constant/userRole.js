@@ -5,7 +5,8 @@ exports.UserRole = {
     SUPER_ADMIN: 'SUPER_ADMIN',
     ADMIN: 'ADMIN',
     KEEPER: 'KEEPER',
-    USER: 'USER'
+    USER: 'USER',
+    ACCOUNTANT: 'ACCOUNTANT'
 };
 exports.UserStatus = {
     PENDING: 'PENDING',

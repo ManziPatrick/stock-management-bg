@@ -14,8 +14,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProformaService = void 0;
 const proforma_model_1 = __importDefault(require("./proforma.model"));
-const product_model_1 = __importDefault(require("../product/product.model"));
-const mongoose_1 = __importDefault(require("mongoose"));
 const uuid_1 = require("uuid");
 class ProformaService {
     generateInvoiceNumber() {
@@ -25,46 +23,19 @@ class ProformaService {
     }
     createProforma(proformaData) {
         return __awaiter(this, void 0, void 0, function* () {
-            var _a, _b;
-            const session = yield mongoose_1.default.startSession();
-            session.startTransaction();
             try {
                 const invoiceNo = this.generateInvoiceNumber();
-                console.log('invoiceNo', invoiceNo);
-                const issueDate = proformaData.date || new Date();
-                const paymentDays = ((_a = proformaData.terms) === null || _a === void 0 ? void 0 : _a.paymentDays) || 30;
-                const dueDate = proformaData.dueDate || new Date(issueDate.getTime() + (paymentDays * 24 * 60 * 60 * 1000));
-                const preparedData = Object.assign(Object.assign({}, proformaData), { date: issueDate, dueDate: dueDate, invoiceNumber: invoiceNo, invoiceDetails: {
+                // Prepare the proforma data with generated invoice number
+                const preparedData = Object.assign(Object.assign({}, proformaData), { invoiceNumber: invoiceNo, date: new Date(), status: 'draft', invoiceDetails: {
                         invoiceNo: invoiceNo,
-                        invoiceDate: issueDate,
-                        dueDate: dueDate
-                    }, terms: {
-                        paymentDays: paymentDays,
-                        lateFeePercentage: ((_b = proformaData.terms) === null || _b === void 0 ? void 0 : _b.lateFeePercentage) || 5
+                        invoiceDate: new Date()
                     } });
-                // Validate product stock but do NOT reduce quantity
-                if (preparedData.items && preparedData.items.length > 0) {
-                    for (const item of preparedData.items) {
-                        const product = yield product_model_1.default.findById(item.product).session(session);
-                        if (!product) {
-                            throw new Error(`Product ${item.product} not found`);
-                        }
-                        if (product.stock < item.quantity) {
-                            throw new Error(`Insufficient stock for product ${product.name}`);
-                        }
-                    }
-                }
                 const proforma = new proforma_model_1.default(preparedData);
-                yield proforma.save({ session });
-                yield session.commitTransaction();
+                yield proforma.save();
                 return proforma;
             }
             catch (error) {
-                yield session.abortTransaction();
                 throw error;
-            }
-            finally {
-                session.endSession();
             }
         });
     }
@@ -77,8 +48,7 @@ class ProformaService {
             }
             if (search) {
                 query.$or = [
-                    { 'billTo.name': { $regex: search, $options: 'i' } },
-                    { 'billFrom.name': { $regex: search, $options: 'i' } },
+                    { clientName: { $regex: search, $options: 'i' } },
                     { invoiceNumber: { $regex: search, $options: 'i' } },
                     { 'invoiceDetails.invoiceNo': { $regex: search, $options: 'i' } }
                 ];
@@ -94,7 +64,7 @@ class ProformaService {
                 proforma_model_1.default.find(query)
                     .populate({
                     path: 'items.product',
-                    select: 'name price stock'
+                    select: 'name price'
                 })
                     .sort({ createdAt: -1 })
                     .skip(skip)
@@ -134,10 +104,8 @@ class ProformaService {
     update(id, updateData) {
         return __awaiter(this, void 0, void 0, function* () {
             var _a;
-            const session = yield mongoose_1.default.startSession();
-            session.startTransaction();
             try {
-                const proforma = yield proforma_model_1.default.findById(id).session(session);
+                const proforma = yield proforma_model_1.default.findById(id);
                 if (!proforma) {
                     throw new Error('Proforma not found');
                 }
@@ -145,71 +113,28 @@ class ProformaService {
                 if (updateData.invoiceNumber || ((_a = updateData.invoiceDetails) === null || _a === void 0 ? void 0 : _a.invoiceNo)) {
                     throw new Error('Invoice number cannot be modified');
                 }
-                // If updating items, check and update product stock
-                if (updateData.items) {
-                    // Restore original stock
-                    for (const item of proforma.items) {
-                        const product = yield product_model_1.default.findById(item.product).session(session);
-                        if (product) {
-                            product.stock += item.quantity;
-                            yield product.save({ session });
-                        }
-                    }
-                    // Validate and update new stock
-                    for (const item of updateData.items) {
-                        const product = yield product_model_1.default.findById(item.product).session(session);
-                        if (!product) {
-                            throw new Error(`Product ${item.product} not found`);
-                        }
-                        if (product.stock < item.quantity) {
-                            throw new Error(`Insufficient stock for product ${product.name}`);
-                        }
-                        product.stock -= item.quantity;
-                        yield product.save({ session });
-                    }
-                }
                 // Update the proforma
                 Object.assign(proforma, updateData);
-                yield proforma.save({ session });
-                yield session.commitTransaction();
+                yield proforma.save();
                 return proforma;
             }
             catch (error) {
-                yield session.abortTransaction();
                 throw error;
-            }
-            finally {
-                session.endSession();
             }
         });
     }
     delete(id) {
         return __awaiter(this, void 0, void 0, function* () {
-            const session = yield mongoose_1.default.startSession();
-            session.startTransaction();
             try {
-                const proforma = yield proforma_model_1.default.findById(id).session(session);
+                const proforma = yield proforma_model_1.default.findById(id);
                 if (!proforma)
                     throw new Error('Proforma not found');
                 if (proforma.status !== 'draft')
                     throw new Error('Only draft Proformas can be deleted');
-                // Restore product stock
-                for (const item of proforma.items) {
-                    const product = yield product_model_1.default.findById(item.product).session(session);
-                    if (product) {
-                        product.stock += item.quantity;
-                        yield product.save({ session });
-                    }
-                }
-                yield proforma.deleteOne({ session });
-                yield session.commitTransaction();
+                yield proforma.deleteOne();
             }
             catch (error) {
-                yield session.abortTransaction();
                 throw error;
-            }
-            finally {
-                session.endSession();
             }
         });
     }

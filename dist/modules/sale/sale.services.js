@@ -1188,6 +1188,22 @@ class SaleServices extends baseServices_1.default {
             };
         });
     }
+    updateStatus(id, status) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const saleTransaction = yield this.model.findById(id);
+                if (!saleTransaction) {
+                    throw new customError_1.default(404, 'Sale transaction not found');
+                }
+                // Update the status
+                const updatedTransaction = yield this.model.findByIdAndUpdate(id, { $set: { status } }, { new: true });
+                return updatedTransaction;
+            }
+            catch (error) {
+                throw new customError_1.default(400, error.message || 'Failed to update sale status');
+            }
+        });
+    }
     readById(id) {
         return __awaiter(this, void 0, void 0, function* () {
             const result = yield this.model.findById(id);
