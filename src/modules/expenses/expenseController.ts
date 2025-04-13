@@ -3,7 +3,7 @@ import { getAllExpenses, createExpense, deleteExpense } from './expenseService';
 import { validateExpense } from './expenseValidator';
 import { ApiError } from './error';
 import { IExpense } from './expense.interface';
-import { Expense } from './expenseModel'; // Assuming Expense is the mongoose model
+import { Expense } from './expenseModel';
 
 export const getExpenses = async (
   req: Request,
@@ -26,44 +26,37 @@ export const getExpenses = async (
       throw new ApiError(400, 'Invalid limit value');
     }
 
+    // Check user role - if not ADMIN or ACCOUNTANT, only show their own expenses
+    let createdBy = null;
+    if (req.user?.role !== 'ADMIN' && req.user?.role !== 'ACCOUNTANT') {
+      createdBy = req.user?._id;
+    }
+
     // Call the service layer function to get expenses with pagination
-    const expenses = await getAllExpenses({
+    const expensesData = await getAllExpenses({
       page: pageNumber,
       limit: limitNumber,
       search: search as string,
       status: status as string,
+      createdBy
     });
-
-    // Calculate the total number of expenses (for pagination purposes)
-    const totalExpenses = await getTotalExpenses({ search: search as string, status: status as string });
-
-    const totalPages = Math.ceil(totalExpenses / limitNumber);
 
     res.status(200).json({
       success: true,
       statusCode: 200,
       message: 'Expenses retrieved successfully',
-      data: expenses,
+      data: expensesData.data,
+      meta: expensesData.meta,
       pagination: {
         currentPage: pageNumber,
-        totalPages,
-        totalExpenses,
+        totalPages: expensesData.meta.totalPages,
+        totalExpenses: expensesData.meta.total,
       },
     });
   } catch (error) {
     console.error('Error fetching expenses:', error);
-    next(new ApiError(500, 'Failed to fetch expenses'));
+    next(error);
   }
-};
-
-// Service function to get total number of expenses
-export const getTotalExpenses = async ({ search, status }: { search: string, status: string }): Promise<number> => {
-  const query: any = { status };
-  if (search) {
-    query['name'] = { $regex: search, $options: 'i' }; // Example search filter for "name" field
-  }
-  const totalExpenses = await Expense.countDocuments(query);
-  return totalExpenses;
 };
 
 export const addExpense = async (
@@ -102,7 +95,6 @@ export const addExpense = async (
     });
   } catch (error) {
     console.error('Error creating expense:', error);
-
     next(error);
   }
 };
@@ -118,11 +110,19 @@ export const removeExpense = async (
       throw new ApiError(400, 'Expense ID is required');
     }
 
-    const expense = await deleteExpense(id);
-
+    // First check if the user has permission to delete this expense
+    const expense = await Expense.findById(id);
     if (!expense) {
       throw new ApiError(404, 'Expense not found');
     }
+
+    // Only allow ADMIN or the creator to delete expenses
+    if (req.user?.role !== 'ADMIN' && 
+        req.user?._id.toString() !== expense.createdBy.toString()) {
+      throw new ApiError(403, 'You do not have permission to delete this expense');
+    }
+
+    await deleteExpense(id);
 
     res.status(200).json({
       success: true,

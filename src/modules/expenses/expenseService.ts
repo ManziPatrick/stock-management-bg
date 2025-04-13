@@ -1,4 +1,7 @@
 import { Expense, IExpense } from './expenseModel';
+import { checkPettyCashBalance, recordPettyCashExpense } from './pettyCashService';
+import { ApiError } from './error';
+import { Types } from 'mongoose';
 
 /**
  * Fetch all expenses based on a query.
@@ -10,16 +13,23 @@ export const getAllExpenses = async ({
     limit = 10,
     search = '',
     status = 'ACTIVE',
+    createdBy = null
 }: {
     page: number;
     limit: number;
     search: string;
     status: string;
+    createdBy?: Types.ObjectId | null;
 }) => {
     const query: any = { status };
 
+    // If createdBy is provided, filter by creator
+    if (createdBy) {
+        query.createdBy = createdBy;
+    }
+
     if (search) {
-        query['name'] = { $regex: search, $options: 'i' };
+        query['title'] = { $regex: search, $options: 'i' };
     }
 
     try {
@@ -29,10 +39,12 @@ export const getAllExpenses = async ({
         const currentMonth = now.getMonth() + 1;
         const currentDay = now.getDate();
 
-        // Fetch paginated expenses
+        // Fetch paginated expenses with user details
         const expenses = await Expense.find(query)
+            .sort({ date: -1 })
             .skip((page - 1) * limit)
             .limit(limit)
+            .populate('createdBy', 'name email role')
             .exec();
 
         const totalExpenses = await Expense.countDocuments(query);
@@ -52,78 +64,43 @@ export const getAllExpenses = async ({
             }
         ]);
 
-        // Get daily statistics
-        const dailyStats = await Expense.aggregate([
+        // Get payment method breakdown
+        const paymentMethodStats = await Expense.aggregate([
             { $match: query },
             {
                 $group: {
-                    _id: {
-                        year: { $year: '$date' },
-                        month: { $month: '$date' },
-                        day: { $dayOfMonth: '$date' }
-                    },
-                    dailyTotal: { $sum: '$amount' },
+                    _id: '$paymentMethod',
+                    total: { $sum: '$amount' },
                     count: { $count: {} }
                 }
-            },
-            { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
+            }
         ]);
 
-        // Get monthly statistics
-        const monthlyStats = await Expense.aggregate([
+        // Get category breakdown
+        const categoryStats = await Expense.aggregate([
             { $match: query },
             {
                 $group: {
-                    _id: {
-                        year: { $year: '$date' },
-                        month: { $month: '$date' }
-                    },
-                    monthlyTotal: { $sum: '$amount' },
+                    _id: '$category',
+                    total: { $sum: '$amount' },
                     count: { $count: {} }
                 }
-            },
-            { $sort: { '_id.year': -1, '_id.month': -1 } }
+            }
         ]);
-
-        // Get yearly statistics
-        const yearlyStats = await Expense.aggregate([
-            { $match: query },
-            {
-                $group: {
-                    _id: {
-                        year: { $year: '$date' }
-                    },
-                    yearlyTotal: { $sum: '$amount' },
-                    count: { $count: {} }
-                }
-            },
-            { $sort: { '_id.year': -1 } }
-        ]);
-
-        // Get recent purchases
-        const recentPurchases = await Expense.find(query)
-            .sort({ date: -1 })
-            .limit(5)
-            .select('_id sellerName amount date status')
-            .lean();
 
         return {
             statusCode: 200,
             success: true,
-            message: "Purchases retrieved successfully!",
+            message: "Expenses retrieved successfully!",
             data: expenses,
             meta: {
                 page,
                 limit,
                 total: totalExpenses,
-                totalPage: Math.ceil(totalExpenses / limit),
-                totalExpenses: {
-                    stats,
-                    dailyStats,
-                    monthlyStats,
-                    yearlyStats,
-                    recentPurchases
-                }
+                totalPages: Math.ceil(totalExpenses / limit),
+                stats,
+                paymentMethodStats,
+                categoryStats
             }
         };
     } catch (error) {
@@ -131,7 +108,6 @@ export const getAllExpenses = async ({
         throw new Error('Failed to fetch expenses.');
     }
 };
-
 
 /**
  * Create a new expense document.
@@ -151,7 +127,28 @@ export const createExpense = async (data: Partial<IExpense>): Promise<IExpense> 
             throw new Error('Missing createdBy field.');
         }
 
-        return await Expense.create(data);
+        // Check if petty cash has sufficient balance for the expense
+        if (data.paymentMethod === 'PETTY_CASH') {
+            const hasSufficientBalance = await checkPettyCashBalance(data.amount as number);
+            if (!hasSufficientBalance) {
+                throw new ApiError(400, 'Insufficient petty cash balance');
+            }
+        }
+
+        // Create the expense
+        const expense = await Expense.create(data);
+
+        // If it's a petty cash expense, update the petty cash balance
+        if (data.paymentMethod === 'PETTY_CASH') {
+            await recordPettyCashExpense(
+                expense._id,
+                expense.amount,
+                expense.title,
+                expense.createdBy
+            );
+        }
+
+        return expense;
     } catch (error) {
         if (error instanceof Error) {
             throw error; // Rethrow validation errors

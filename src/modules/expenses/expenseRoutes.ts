@@ -1,34 +1,51 @@
 import { Router } from 'express';
 import * as expenseController from './expenseController';
+import * as pettyCashController from './pettyCashController';
 import { verifyAuth, authorizeRoles } from '../../middlewares/verifyAuth';
 
 const router = Router();
 
-// Define routes with proper middleware and controller functions
+// Expense routes
 router.get(
   '/',
   verifyAuth,
   expenseController.getExpenses
 );
 
-router.get(
-    '/all',
-    verifyAuth,
-    expenseController.getTotalExpenses
-  );
-  
 router.post(
   '/',
   verifyAuth,
-  authorizeRoles('ADMIN', 'KEEPER'),
+  authorizeRoles('ADMIN', 'KEEPER', 'ACCOUNTANT'),
   expenseController.addExpense
 );
 
 router.delete(
   '/:id',
   verifyAuth,
-  authorizeRoles('ADMIN'),
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
   expenseController.removeExpense
+);
+
+// Petty Cash routes - restricted to ADMIN and ACCOUNTANT roles
+router.get(
+  '/petty-cash',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
+  pettyCashController.getPettyCash
+);
+
+router.post(
+  '/petty-cash/initialize',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
+  pettyCashController.initializePettyCashHandler
+);
+
+router.post(
+  '/petty-cash/top-up',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
+  pettyCashController.topUpPettyCashHandler
 );
 
 export default router;
