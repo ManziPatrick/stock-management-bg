@@ -7,16 +7,23 @@ const expenseSchema = new mongoose_1.Schema({
     amount: { type: Number, required: true },
     description: { type: String },
     date: { type: Date, required: true },
-    createdBy: { type: mongoose_1.Schema.Types.ObjectId, ref: 'user', required: true },
+    createdBy: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
     status: { type: String, enum: ['ACTIVE', 'ARCHIVED'], default: 'ACTIVE' },
+    category: {
+        type: String,
+        enum: ['FOOD', 'TRANSPORT', 'UTILITIES', 'ENTERTAINMENT', 'OTHER'],
+        default: 'OTHER'
+    },
+    paymentMethod: {
+        type: String,
+        enum: ['CASH', 'CHECK', 'MOMO', 'PETTY_CASH'],
+        required: true
+    }
 }, { timestamps: true });
-// Pre-save hook to perform any necessary actions before saving, such as validation
 expenseSchema.pre('save', function (next) {
-    // Ensure that the amount is always positive
     if (this.amount < 0) {
         return next(new Error('Amount cannot be negative'));
     }
     next();
 });
-// Create and export the Expense model as a named export
 exports.Expense = (0, mongoose_1.model)('Expense', expenseSchema);

@@ -9,12 +9,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.removeExpense = exports.addExpense = exports.getTotalExpenses = exports.getExpenses = void 0;
+exports.removeExpense = exports.addExpense = exports.getExpenses = void 0;
 const expenseService_1 = require("./expenseService");
 const expenseValidator_1 = require("./expenseValidator");
 const error_1 = require("./error");
-const expenseModel_1 = require("./expenseModel"); // Assuming Expense is the mongoose model
+const expenseModel_1 = require("./expenseModel");
 const getExpenses = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b, _c;
     try {
         // Extract page and limit from query parameters
         const { page = 1, limit = 10, search = '', status = 'ACTIVE' } = req.query;
@@ -27,44 +28,38 @@ const getExpenses = (req, res, next) => __awaiter(void 0, void 0, void 0, functi
         if (isNaN(limitNumber) || limitNumber <= 0) {
             throw new error_1.ApiError(400, 'Invalid limit value');
         }
+        // Check user role - if not ADMIN or ACCOUNTANT, only show their own expenses
+        let createdBy = null;
+        if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'ADMIN' && ((_b = req.user) === null || _b === void 0 ? void 0 : _b.role) !== 'ACCOUNTANT') {
+            createdBy = (_c = req.user) === null || _c === void 0 ? void 0 : _c._id;
+        }
         // Call the service layer function to get expenses with pagination
-        const expenses = yield (0, expenseService_1.getAllExpenses)({
+        const expensesData = yield (0, expenseService_1.getAllExpenses)({
             page: pageNumber,
             limit: limitNumber,
             search: search,
             status: status,
+            createdBy
         });
-        // Calculate the total number of expenses (for pagination purposes)
-        const totalExpenses = yield (0, exports.getTotalExpenses)({ search: search, status: status });
-        const totalPages = Math.ceil(totalExpenses / limitNumber);
         res.status(200).json({
             success: true,
             statusCode: 200,
             message: 'Expenses retrieved successfully',
-            data: expenses,
+            data: expensesData.data,
+            meta: expensesData.meta,
             pagination: {
                 currentPage: pageNumber,
-                totalPages,
-                totalExpenses,
+                totalPages: expensesData.meta.totalPages,
+                totalExpenses: expensesData.meta.total,
             },
         });
     }
     catch (error) {
         console.error('Error fetching expenses:', error);
-        next(new error_1.ApiError(500, 'Failed to fetch expenses'));
+        next(error);
     }
 });
 exports.getExpenses = getExpenses;
-// Service function to get total number of expenses
-const getTotalExpenses = (_a) => __awaiter(void 0, [_a], void 0, function* ({ search, status }) {
-    const query = { status };
-    if (search) {
-        query['name'] = { $regex: search, $options: 'i' }; // Example search filter for "name" field
-    }
-    const totalExpenses = yield expenseModel_1.Expense.countDocuments(query);
-    return totalExpenses;
-});
-exports.getTotalExpenses = getTotalExpenses;
 const addExpense = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     try {
@@ -92,15 +87,23 @@ const addExpense = (req, res, next) => __awaiter(void 0, void 0, void 0, functio
 });
 exports.addExpense = addExpense;
 const removeExpense = (req, res, next) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     try {
         const { id } = req.params;
         if (!id) {
             throw new error_1.ApiError(400, 'Expense ID is required');
         }
-        const expense = yield (0, expenseService_1.deleteExpense)(id);
+        // First check if the user has permission to delete this expense
+        const expense = yield expenseModel_1.Expense.findById(id);
         if (!expense) {
             throw new error_1.ApiError(404, 'Expense not found');
         }
+        // Only allow ADMIN or the creator to delete expenses
+        if (((_a = req.user) === null || _a === void 0 ? void 0 : _a.role) !== 'ADMIN' &&
+            ((_b = req.user) === null || _b === void 0 ? void 0 : _b._id.toString()) !== expense.createdBy.toString()) {
+            throw new error_1.ApiError(403, 'You do not have permission to delete this expense');
+        }
+        yield (0, expenseService_1.deleteExpense)(id);
         res.status(200).json({
             success: true,
             statusCode: 200,

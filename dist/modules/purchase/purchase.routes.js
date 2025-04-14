@@ -11,7 +11,7 @@ const purchase_validator_1 = __importDefault(require("./purchase.validator"));
 const purchaseRoutes = (0, express_1.Router)();
 purchaseRoutes.use(verifyAuth_1.verifyAuth);
 purchaseRoutes.post('/', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN'), (0, validateRequest_1.default)(purchase_validator_1.default.createSchema), purchase_controller_1.default.create);
-purchaseRoutes.get('/', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN'), purchase_controller_1.default.getAll);
+purchaseRoutes.get('/', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN', 'ACCOUNTANT'), purchase_controller_1.default.getAll);
 purchaseRoutes.delete('/:id', (0, verifyAuth_1.authorizeRoles)('ADMIN'), purchase_controller_1.default.delete);
 purchaseRoutes.patch('/:id', (0, verifyAuth_1.authorizeRoles)('ADMIN'), (0, validateRequest_1.default)(purchase_validator_1.default.updateSchema), purchase_controller_1.default.update);
 exports.default = purchaseRoutes;

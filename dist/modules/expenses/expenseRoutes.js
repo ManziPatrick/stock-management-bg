@@ -35,11 +35,20 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const expenseController = __importStar(require("./expenseController"));
+const pettyCashController = __importStar(require("./pettyCashController"));
 const verifyAuth_1 = require("../../middlewares/verifyAuth");
 const router = (0, express_1.Router)();
-// Define routes with proper middleware and controller functions
+// Expense routes
 router.get('/', verifyAuth_1.verifyAuth, expenseController.getExpenses);
-router.get('/all', verifyAuth_1.verifyAuth, expenseController.getTotalExpenses);
-router.post('/', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'KEEPER'), expenseController.addExpense);
-router.delete('/:id', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN'), expenseController.removeExpense);
+router.post('/', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'KEEPER', 'ACCOUNTANT'), expenseController.addExpense);
+router.delete('/:id', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), expenseController.removeExpense);
+// Petty Cash routes - restricted to ADMIN and ACCOUNTANT roles
+router.get('/', verifyAuth_1.verifyAuth, expenseController.getExpenses);
+router.post('/', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'KEEPER', 'ACCOUNTANT'), expenseController.addExpense);
+router.get('/petty-cash/transactions', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), pettyCashController.getAllTransactions);
+router.delete('/:id', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), expenseController.removeExpense);
+// Petty Cash routes - restricted to ADMIN and ACCOUNTANT roles
+router.get('/petty-cash', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), pettyCashController.getPettyCash);
+router.post('/petty-cash/initialize', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), pettyCashController.initializePettyCashHandler);
+router.post('/petty-cash/top-up', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'ACCOUNTANT'), pettyCashController.topUpPettyCash);
 exports.default = router;

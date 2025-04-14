@@ -353,7 +353,7 @@ class SaleServices extends baseServices_1.default {
             const dailyExpenses = yield expenseModel_1.Expense.aggregate([
                 {
                     $match: {
-                        createdBy: new mongoose_1.Types.ObjectId(userId),
+                        // createdBy: new Types.ObjectId(userId),
                         status: 'ACTIVE'
                     }
                 },
@@ -386,7 +386,7 @@ class SaleServices extends baseServices_1.default {
             const monthlyExpenses = yield expenseModel_1.Expense.aggregate([
                 {
                     $match: {
-                        createdBy: new mongoose_1.Types.ObjectId(userId),
+                        // createdBy: new Types.ObjectId(userId),
                         status: 'ACTIVE'
                     }
                 },
@@ -1004,13 +1004,13 @@ class SaleServices extends baseServices_1.default {
     }
     readAllDaily(query) {
         return __awaiter(this, void 0, void 0, function* () {
-            const { startDate, endDate, userId } = query;
+            const { startDate, endDate } = query;
             const startDateTime = startDate ? new Date(startDate) : new Date(new Date().setHours(0, 0, 0, 0));
             const endDateTime = endDate ? new Date(endDate) : new Date(new Date().setHours(23, 59, 59, 999));
             // First get sales stats
             const matchStage = {
                 $match: {
-                    user: new mongoose_1.Types.ObjectId(userId),
+                    // user: new Types.ObjectId(userId),
                     createdAt: {
                         $gte: startDateTime,
                         $lte: endDateTime
@@ -1059,7 +1059,7 @@ class SaleServices extends baseServices_1.default {
             const expenses = yield expenseModel_1.Expense.aggregate([
                 {
                     $match: {
-                        createdBy: new mongoose_1.Types.ObjectId(userId),
+                        // createdBy: new Types.ObjectId(userId),
                         status: 'ACTIVE',
                         date: {
                             $gte: startDateTime,
@@ -1098,13 +1098,13 @@ class SaleServices extends baseServices_1.default {
     }
     readAllMonthly(query) {
         return __awaiter(this, void 0, void 0, function* () {
-            const { year, userId } = query;
+            const { year } = query;
             const currentYear = year || new Date().getFullYear().toString();
             const startDate = new Date(`${currentYear}-01-01`);
             const endDate = new Date(`${currentYear}-12-31T23:59:59.999Z`);
             const matchStage = {
                 $match: {
-                    user: new mongoose_1.Types.ObjectId(userId),
+                    // user: new Types.ObjectId(userId),
                     createdAt: {
                         $gte: startDate,
                         $lte: endDate
@@ -1153,7 +1153,7 @@ class SaleServices extends baseServices_1.default {
             const expenses = yield expenseModel_1.Expense.aggregate([
                 {
                     $match: {
-                        createdBy: new mongoose_1.Types.ObjectId(userId),
+                        // createdBy: new Types.ObjectId(userId),
                         status: 'ACTIVE',
                         date: {
                             $gte: startDate,
@@ -1233,7 +1233,7 @@ class SaleServices extends baseServices_1.default {
     }
     readAllYearly(query) {
         return __awaiter(this, void 0, void 0, function* () {
-            const { startYear, endYear, userId } = query;
+            const { startYear, endYear } = query;
             const currentYear = new Date().getFullYear().toString();
             // Set default date range if not provided
             const startDate = startYear ? new Date(`${startYear}-01-01`) : new Date(`${currentYear}-01-01`);
@@ -1242,7 +1242,7 @@ class SaleServices extends baseServices_1.default {
                 : new Date(`${currentYear}-12-31T23:59:59.999Z`);
             const matchStage = {
                 $match: {
-                    user: new mongoose_1.Types.ObjectId(userId),
+                    // user: new Types.ObjectId(userId),
                     createdAt: {
                         $gte: startDate,
                         $lte: endDate
@@ -1290,7 +1290,7 @@ class SaleServices extends baseServices_1.default {
             const expenses = yield expenseModel_1.Expense.aggregate([
                 {
                     $match: {
-                        createdBy: new mongoose_1.Types.ObjectId(userId),
+                        // createdBy: new Types.ObjectId(userId),
                         status: 'ACTIVE',
                         date: {
                             $gte: startDate,
