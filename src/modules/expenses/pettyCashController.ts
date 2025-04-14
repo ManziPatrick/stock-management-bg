@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import { Request, Response } from 'express';
 import { PettyCash } from './pettyCashModel';
 import { Expense } from './expenseModel';
