@@ -28,6 +28,34 @@ router.delete(
 
 // Petty Cash routes - restricted to ADMIN and ACCOUNTANT roles
 router.get(
+  '/',
+  verifyAuth,
+  expenseController.getExpenses
+);
+
+router.post(
+  '/',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'KEEPER', 'ACCOUNTANT'),
+  expenseController.addExpense
+);
+
+router.get(
+  '/petty-cash/transactions',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
+  pettyCashController.getAllTransactions
+);
+
+router.delete(
+  '/:id',
+  verifyAuth,
+  authorizeRoles('ADMIN', 'ACCOUNTANT'),
+  expenseController.removeExpense
+);
+
+// Petty Cash routes - restricted to ADMIN and ACCOUNTANT roles
+router.get(
   '/petty-cash',
   verifyAuth,
   authorizeRoles('ADMIN', 'ACCOUNTANT'),
@@ -45,7 +73,8 @@ router.post(
   '/petty-cash/top-up',
   verifyAuth,
   authorizeRoles('ADMIN', 'ACCOUNTANT'),
-  pettyCashController.topUpPettyCashHandler
+  pettyCashController.topUpPettyCash
 );
+
 
 export default router;

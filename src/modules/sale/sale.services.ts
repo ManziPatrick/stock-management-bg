@@ -357,7 +357,7 @@ private async addExpensesToDailyStats(dailyStats: any[], userId: string) {
   const dailyExpenses = await Expense.aggregate([
     {
       $match: {
-        createdBy: new Types.ObjectId(userId),
+        // createdBy: new Types.ObjectId(userId),
         status: 'ACTIVE'
       }
     },
@@ -398,7 +398,7 @@ private async addExpensesToMonthlyStats(monthlyStats: any[], userId: string) {
   const monthlyExpenses = await Expense.aggregate([
     {
       $match: {
-        createdBy: new Types.ObjectId(userId),
+        // createdBy: new Types.ObjectId(userId),
         status: 'ACTIVE'
       }
     },
@@ -1029,14 +1029,14 @@ private async getYearlyStats(matchStage: any) {
   }
 
   async readAllDaily(query: { startDate?: string; endDate?: string; userId: string }) {
-    const { startDate, endDate, userId } = query;
+    const { startDate, endDate } = query;
     const startDateTime = startDate ? new Date(startDate) : new Date(new Date().setHours(0, 0, 0, 0));
     const endDateTime = endDate ? new Date(endDate) : new Date(new Date().setHours(23, 59, 59, 999));
 
     // First get sales stats
     const matchStage = {
       $match: {
-        user: new Types.ObjectId(userId),
+        // user: new Types.ObjectId(userId),
         createdAt: {
           $gte: startDateTime,
           $lte: endDateTime
@@ -1086,7 +1086,7 @@ const stats = await this.model.aggregate([
     const expenses = await Expense.aggregate([
       {
         $match: {
-          createdBy: new Types.ObjectId(userId),
+          // createdBy: new Types.ObjectId(userId),
           status: 'ACTIVE',
           date: {
             $gte: startDateTime,
@@ -1133,14 +1133,14 @@ const stats = await this.model.aggregate([
     };
   }
   async readAllMonthly(query: { year?: string; userId: string }) {
-    const { year, userId } = query;
+    const { year } = query;
     const currentYear = year || new Date().getFullYear().toString();
     const startDate = new Date(`${currentYear}-01-01`);
     const endDate = new Date(`${currentYear}-12-31T23:59:59.999Z`);
   
     const matchStage = {
       $match: {
-        user: new Types.ObjectId(userId),
+        // user: new Types.ObjectId(userId),
         createdAt: {
           $gte: startDate,
           $lte: endDate
@@ -1191,7 +1191,7 @@ const stats = await this.model.aggregate([
     const expenses = await Expense.aggregate([
       {
         $match: {
-          createdBy: new Types.ObjectId(userId),
+          // createdBy: new Types.ObjectId(userId),
           status: 'ACTIVE',
           date: {
             $gte: startDate,
@@ -1291,7 +1291,7 @@ const stats = await this.model.aggregate([
   }
 
   async readAllYearly(query: { startYear?: string; endYear?: string; userId: string }) {
-    const { startYear, endYear, userId } = query;
+    const { startYear, endYear} = query;
     const currentYear = new Date().getFullYear().toString();
     
     // Set default date range if not provided
@@ -1302,7 +1302,7 @@ const stats = await this.model.aggregate([
   
     const matchStage = {
       $match: {
-        user: new Types.ObjectId(userId),
+        // user: new Types.ObjectId(userId),
         createdAt: {
           $gte: startDate,
           $lte: endDate
@@ -1352,7 +1352,7 @@ const stats = await this.model.aggregate([
     const expenses = await Expense.aggregate([
       {
         $match: {
-          createdBy: new Types.ObjectId(userId),
+          // createdBy: new Types.ObjectId(userId),
           status: 'ACTIVE',
           date: {
             $gte: startDate,

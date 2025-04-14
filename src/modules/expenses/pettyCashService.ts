@@ -47,6 +47,9 @@ export const getPettyCashStatus = async () => {
       throw new ApiError(404, 'Petty cash record not found');
     }
     
+    // Sort transactions by date in descending order (most recent first)
+    pettyCash.transactions.sort((a, b) => b.date.getTime() - a.date.getTime());
+    
     // Get petty cash expenses for this month
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
@@ -148,6 +151,86 @@ export const recordPettyCashExpense = async (expenseId: Types.ObjectId, amount: 
     return pettyCash;
   } catch (error) {
     console.error('Error recording petty cash expense:', error);
+    throw error;
+  }
+};
+/**
+ * Get all petty cash transactions with optional pagination and filtering
+ * @param page Current page number (default: 1)
+ * @param limit Number of items per page (default: 20)
+ * @param startDate Optional start date for filtering
+ * @param endDate Optional end date for filtering
+ * @param transactionType Optional type filter ('topup' for positive amounts, 'expense' for negative amounts)
+ */
+export const getAllTransactionsService = async (
+  page: number = 1, 
+  limit: number = 20,
+  startDate?: Date,
+  endDate?: Date,
+  transactionType?: 'topup' | 'expense'
+) => {
+  try {
+    // Find petty cash record
+    const pettyCash = await PettyCash.findOne().populate({
+      path: 'transactions.performedBy',
+      select: 'name email'
+    }).populate({
+      path: 'transactions.expenseId',
+      select: 'title category'
+    });
+    
+    if (!pettyCash) {
+      throw new ApiError(404, 'Petty cash record not found');
+    }
+    
+    // Apply filters to transactions
+    let filteredTransactions = [...pettyCash.transactions];
+    
+    // Filter by date range if provided
+    if (startDate) {
+      filteredTransactions = filteredTransactions.filter(t => 
+        t.date >= startDate
+      );
+    }
+    
+    if (endDate) {
+      const endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      filteredTransactions = filteredTransactions.filter(t => 
+        t.date <= endOfDay
+      );
+    }
+    
+    // Filter by transaction type if provided
+    if (transactionType === 'topup') {
+      filteredTransactions = filteredTransactions.filter(t => t.amount > 0);
+    } else if (transactionType === 'expense') {
+      filteredTransactions = filteredTransactions.filter(t => t.amount < 0);
+    }
+    
+    // Sort transactions by date (most recent first)
+    filteredTransactions.sort((a, b) => b.date.getTime() - a.date.getTime());
+    
+    // Calculate pagination
+    const totalTransactions = filteredTransactions.length;
+    const totalPages = Math.ceil(totalTransactions / limit);
+    const startIndex = (page - 1) * limit;
+    const endIndex = Math.min(startIndex + limit, totalTransactions);
+    
+    // Get paginated transactions
+    const paginatedTransactions = filteredTransactions.slice(startIndex, endIndex);
+    
+    return {
+      transactions: paginatedTransactions,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalItems: totalTransactions,
+        itemsPerPage: limit
+      }
+    };
+  } catch (error) {
+    console.error('Error getting petty cash transactions:', error);
     throw error;
   }
 };
