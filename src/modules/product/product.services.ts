@@ -346,97 +346,200 @@ class ProductServices extends BaseServices<any> {
   }
   
  
-  async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean }) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+  // Product Service Update Method
+async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
+  try {
+    console.log("🚀 Updating product:", id);
+    console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
+    console.log("📦 Payload received:", payload);
 
-    try {
-      if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
-        throw new CustomError(400, 'Invalid measurement data');
-      }
-
-      console.log("🚀 Updating product:", id);
-      console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
-      console.log("📦 Payload received:", payload);
-
-      const updatedProduct = await this.model.findByIdAndUpdate(
-        id,
-        {
-          ...payload,
-          ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
-          ...(payload.category && { category: new Types.ObjectId(payload.category) }),
-          ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
-        },
-        { new: true, session }
-      ).populate(['category', 'brand', 'seller']);
-
-      if (!updatedProduct) {
-        throw new CustomError(404, 'Product not found');
-      }
-
-      console.log("✅ Product updated successfully:", updatedProduct);
-
-      // Update purchase records if required
-      if (options?.updatePurchases) {
-        console.log("📢 Updating purchase records...");
-        const purchases = await Purchase.find({ 
-          product: id,
-          stockAddition: { $ne: true } 
-        }).session(session);
-
-        console.log("🛒 Purchases found:", purchases.length);
-
-        if (purchases.length > 0) {
-          const purchaseUpdates = purchases.map(async (purchase) => {
-            const updates: any = {};
-
-            // Update price only if it has changed
-            if (payload.price && payload.price !== purchase.unitPrice) {
-              updates.unitPrice = payload.price;
-              updates.totalPrice = payload.price * purchase.quantity;
-            }
-
-            // Update measurement only if it has changed
-            if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
-              updates.measurement = payload.measurement;
-            }
-
-            if (Object.keys(updates).length > 0) {
-              console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
-              return Purchase.findByIdAndUpdate(purchase._id, updates, { session });
-            } else {
-              console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
-              return null;
-            }
-          });
-
-          await Promise.all(purchaseUpdates); 
-        } else {
-          console.log("⚠️ No purchases found for this product. Skipping purchase update.");
-        }
-      } else {
-        console.log("⚠️ Purchases not updated. Conditions not met.");
-      }
-
-      await session.commitTransaction();
-      await this.sendProductNotification(updatedProduct, 'Updated');
-      await this.checkAndNotifyStock(updatedProduct);
-
-      return {
-        success: true,
-        statusCode: 200,
-        message: 'Product updated successfully',
-        data: updatedProduct
-      };
-    } catch (error) {
-      await session.abortTransaction();
-      console.error("❌ Error updating product:", error);
-      if (error instanceof CustomError) throw error;
-      throw new CustomError(400, 'Product update failed');
-    } finally {
-      session.endSession();
+    if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+      throw new CustomError(400, 'Invalid measurement data');
     }
+
+    // Update the product without using transactions
+    const updatedProduct = await this.model.findByIdAndUpdate(
+      id,
+      {
+        ...payload,
+        ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
+        ...(payload.category && { category: new Types.ObjectId(payload.category) }),
+        ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
+      },
+      { new: true }
+    ).populate(['category', 'brand', 'seller']);
+
+    if (!updatedProduct) {
+      throw new CustomError(404, 'Product not found');
+    }
+
+    console.log("✅ Product updated successfully:", updatedProduct);
+
+    // --- Update Purchase Records if Flag is True ---
+    if (options?.updatePurchases) {
+      console.log("📢 Updating purchase records...");
+      const purchases = await Purchase.find({
+        product: id,
+        stockAddition: { $ne: true }
+      });
+
+      console.log("🛒 Purchases found:", purchases.length);
+
+      for (const purchase of purchases) {
+        const updates: any = {};
+
+        if (payload.price && payload.price !== purchase.unitPrice) {
+          updates.unitPrice = payload.price;
+          updates.totalPrice = payload.price * purchase.quantity;
+        }
+
+        if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
+          updates.measurement = payload.measurement;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
+          try {
+            await Purchase.findByIdAndUpdate(
+              purchase._id, 
+              updates, 
+              { session: undefined } // explicitly set session to undefined
+            );
+          } catch (purchaseError) {
+            console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
+            // Continue with other purchases even if one fails
+          }
+        } else {
+          console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
+        }
+      }
+    } else {
+      console.log("⚠️ Purchases not updated. Flag not set.");
+    }
+
+    await this.sendProductNotification(updatedProduct, 'Updated');
+    await this.checkAndNotifyStock(updatedProduct);
+
+    return {
+      success: true,
+      statusCode: 200,
+      message: 'Product updated successfully',
+      data: updatedProduct
+    };
+
+  } catch (error) {
+    console.error("❌ Error updating product:", error);
+    if (error instanceof CustomError) throw error;
+    
+    if (error.name === 'ValidationError') {
+      throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
+    }
+    if (error.code === 11000) {
+      throw new CustomError(400, 'Duplicate product entry');
+    }
+    
+    throw new CustomError(500, `Failed to update product: ${error.message}`);
   }
+}
+
+async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
+  try {
+    console.log("🚀 Updating product:", id);
+    console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
+    console.log("📦 Payload received:", payload);
+
+    if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+      throw new CustomError(400, 'Invalid measurement data');
+    }
+
+    // First check if product exists
+    const productExists = await this.model.findById(id);
+    if (!productExists) {
+      throw new CustomError(404, 'Product not found');
+    }
+
+    // Update the product without using transactions
+    const updatedProduct = await this.model.findByIdAndUpdate(
+      id,
+      {
+        ...payload,
+        ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
+        ...(payload.category && { category: new Types.ObjectId(payload.category) }),
+        ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
+      },
+      { new: true }
+    ).populate(['category', 'brand', 'seller']);
+
+    console.log("✅ Product updated successfully:", updatedProduct);
+
+    // --- Update Purchase Records if Flag is True ---
+    if (options?.updatePurchases) {
+      console.log("🔄 Searching for purchases with productId:", id);
+      const purchases = await Purchase.find({
+        product: id,
+        stockAddition: { $ne: true }
+      });
+
+      console.log("🛒 Purchases found:", purchases.length);
+
+      for (const purchase of purchases) {
+        const updates: any = {};
+
+        if (payload.price && payload.price !== purchase.unitPrice) {
+          updates.unitPrice = payload.price;
+          updates.totalPrice = payload.price * purchase.quantity;
+        }
+
+        if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
+          updates.measurement = payload.measurement;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
+          try {
+            await Purchase.findByIdAndUpdate(
+              purchase._id, 
+              updates, 
+              { new: true } // Remove session completely
+            );
+          } catch (purchaseError) {
+            console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
+            // Continue with other purchases even if one fails
+          }
+        } else {
+          console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
+        }
+      }
+    } else {
+      console.log("⚠️ Purchases not updated. Flag not set.");
+    }
+
+    await this.sendProductNotification(updatedProduct, 'Updated');
+    await this.checkAndNotifyStock(updatedProduct);
+
+    return {
+      success: true,
+      statusCode: 200,
+      message: 'Product updated successfully',
+      data: updatedProduct
+    };
+
+  } catch (error) {
+    console.error("❌ Error updating product:", error);
+    if (error instanceof CustomError) throw error;
+    
+    if (error.name === 'ValidationError') {
+      throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
+    }
+    if (error.code === 11000) {
+      throw new CustomError(400, 'Duplicate product entry');
+    }
+    
+    throw new CustomError(500, `Failed to update product: ${error.message}`);
+  }
+}
+  
+  
 
   async delete(id: string) {
     try {

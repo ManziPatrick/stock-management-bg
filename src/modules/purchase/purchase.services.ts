@@ -422,9 +422,6 @@ class PurchaseServices extends BaseServices<any> {
     return result[0] || { totalAmount: 0, totalCount: 0, monthlyStats: [] };
   }
   async update(productId: string, payload: any) {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-  
     try {
       console.log("🔄 Searching for purchase with productId:", productId);
       
@@ -458,13 +455,12 @@ class PurchaseServices extends BaseServices<any> {
         updateFields.totalPrice = newQuantity * newUnitPrice;
       }
   
-      // Perform the update
+      // Perform the update without using session
       const updatedPurchase = await Purchase.findOneAndUpdate(
         { product: productId },
         { $set: updateFields },
         { 
-          new: true, 
-          session,
+          new: true,
           runValidators: true 
         }
       );
@@ -473,7 +469,6 @@ class PurchaseServices extends BaseServices<any> {
         throw new CustomError(404, 'Purchase not found after update');
       }
   
-      await session.commitTransaction();
       console.log("✅ Purchase updated successfully");
   
       return {
@@ -484,13 +479,10 @@ class PurchaseServices extends BaseServices<any> {
       };
   
     } catch (error) {
-      await session.abortTransaction();
       console.error("❌ Error updating purchase:", error);
       
       if (error instanceof CustomError) throw error;
       throw new CustomError(400, 'Purchase update failed');
-    } finally {
-      session.endSession();
     }
   }
 
