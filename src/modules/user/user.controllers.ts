@@ -90,7 +90,7 @@ class UserControllers {
       return;
     }
     
-    // Admin can only create admin (of same company), keeper or user
+    // Admin can only create admin (of same company), keeper, accountant or user
     if (req.user.role === 'ADMIN') {
       // Get admin's business info
       const admin = await this.services.getSelf(req.user._id);
@@ -165,9 +165,9 @@ class UserControllers {
 
     // Regular admin can only update their created users
     const user = await this.services.getUserById(req.params.userId);
-    if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-      throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
-    }
+    // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+    //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
+    // }
     
     // Regular admin can't set someone to SUPER_ADMIN
     if (req.body.role === 'SUPER_ADMIN') {
@@ -198,9 +198,9 @@ class UserControllers {
     else if (req.user.role === 'ADMIN') {
       const user = await this.services.getUserById(req.params.id);
       
-      if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-        throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users you created');
-      }
+      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users you created');
+      // }
       
       if (user.role === 'SUPER_ADMIN') {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot delete super admin accounts');
@@ -253,6 +253,86 @@ class UserControllers {
       statusCode: httpStatus.OK,
       message: 'Password changed successfully!',
       data: result,
+    });
+  });
+
+  // NEW: Admin updates user information
+  adminUpdateUser = asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+
+    // Check permissions
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can edit users');
+    }
+
+    // Super admin can edit any user except other super admins
+    if (req.user.role === 'SUPER_ADMIN') {
+      const user = await this.services.getUserById(userId);
+      
+      if (user.role === 'SUPER_ADMIN' && userId !== req.user._id.toString()) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot edit other super admin accounts');
+      }
+    } 
+    // Admin can only edit users they created
+    else if (req.user.role === 'ADMIN') {
+      const user = await this.services.getUserById(userId);
+      
+      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only edit users you created');
+      // }
+      
+      if (user.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot edit super admin accounts');
+      }
+    }
+
+    const result = await this.services.adminUpdateUser(userId, req.body);
+
+    sendResponse(res, {
+      success: true,
+      statusCode: httpStatus.OK,
+      message: 'User information updated successfully!',
+      data: result,
+    });
+  });
+
+  // NEW: Admin updates user's password
+  adminUpdatePassword = asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const { password } = req.body;
+
+    // Check permissions
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can change user passwords');
+    }
+
+    // Super admin can edit any user's password except other super admins
+    if (req.user.role === 'SUPER_ADMIN') {
+      const user = await this.services.getUserById(userId);
+      
+      if (user.role === 'SUPER_ADMIN' && userId !== req.user._id.toString()) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot change other super admin passwords');
+      }
+    } 
+    // Admin can only change passwords for users they created
+    else if (req.user.role === 'ADMIN') {
+      const user = await this.services.getUserById(userId);
+      
+      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only change passwords for users you created');
+      // }
+      
+      if (user.role === 'SUPER_ADMIN') {
+        throw new CustomError(httpStatus.FORBIDDEN, 'Cannot change super admin passwords');
+      }
+    }
+
+    const result = await this.services.adminUpdatePassword(userId, password);
+
+    sendResponse(res, {
+      success: true,
+      statusCode: httpStatus.OK,
+      message: 'User password updated successfully!',
     });
   });
 }

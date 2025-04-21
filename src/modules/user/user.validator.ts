@@ -1,6 +1,4 @@
-import httpStatus from 'http-status';
 import { z } from 'zod';
-import { UserRole } from '../../constant/userRole';
 
 // Business info schema for reuse
 const businessInfoSchema = z.object({
@@ -43,7 +41,7 @@ const createUserSchema = z.object({
   email: z.string({ required_error: 'Email is required!' }).email('Invalid email format'),
   password: z.string({ required_error: 'Password is required!' })
     .min(6, { message: 'password must have 6 characters' }),
-  role: z.enum(['SUPER_ADMIN', 'ADMIN', 'KEEPER', 'USER'], {
+  role: z.enum(['SUPER_ADMIN', 'ADMIN', 'KEEPER', 'USER', 'ACCOUNTANT'], {
     required_error: 'Role is required!',
     invalid_type_error: 'Role must be valid'
   }),
@@ -63,7 +61,7 @@ const createUserSchema = z.object({
 });
 
 const updateUserRoleSchema = z.object({
-  role: z.enum(['ADMIN', 'KEEPER', 'USER'], {
+  role: z.enum(['ADMIN', 'KEEPER', 'USER', 'ACCOUNTANT'], {
     required_error: 'Role is required!',
     invalid_type_error: 'Role must be valid'
   })
@@ -90,6 +88,32 @@ const createOwnerSchema = z.object({
   })
 });
 
+// New schema for admin to update any user's information
+const adminUpdateUserSchema = z.object({
+  name: z.string().optional(),
+  email: z.string().email().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  avatar: z.string().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  facebook: z.string().optional(),
+  twitter: z.string().optional(),
+  linkedin: z.string().optional(),
+  instagram: z.string().optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  businessInfo: businessInfoSchema.optional()
+});
+
+// New schema for admin to update any user's password
+const adminUpdatePasswordSchema = z.object({
+  password: z
+    .string({ required_error: 'New Password is required!' })
+    .min(6, { message: 'new password must have at least 6 characters' })
+});
+
 const userValidator = {
   registerSchema,
   loginSchema,
@@ -98,7 +122,9 @@ const userValidator = {
   createUserSchema,
   updateUserRoleSchema,
   updateUserStatusSchema,
-  createOwnerSchema
+  createOwnerSchema,
+  adminUpdateUserSchema,
+  adminUpdatePasswordSchema
 };
 
 export default userValidator;

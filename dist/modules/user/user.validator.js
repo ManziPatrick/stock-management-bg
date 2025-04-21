@@ -37,7 +37,7 @@ const createUserSchema = zod_1.z.object({
     email: zod_1.z.string({ required_error: 'Email is required!' }).email('Invalid email format'),
     password: zod_1.z.string({ required_error: 'Password is required!' })
         .min(6, { message: 'password must have 6 characters' }),
-    role: zod_1.z.enum(['SUPER_ADMIN', 'ADMIN', 'KEEPER', 'USER'], {
+    role: zod_1.z.enum(['SUPER_ADMIN', 'ADMIN', 'KEEPER', 'USER', 'ACCOUNTANT'], {
         required_error: 'Role is required!',
         invalid_type_error: 'Role must be valid'
     }),
@@ -56,7 +56,7 @@ const createUserSchema = zod_1.z.object({
     businessInfo: businessInfoSchema.optional()
 });
 const updateUserRoleSchema = zod_1.z.object({
-    role: zod_1.z.enum(['ADMIN', 'KEEPER', 'USER'], {
+    role: zod_1.z.enum(['ADMIN', 'KEEPER', 'USER', 'ACCOUNTANT'], {
         required_error: 'Role is required!',
         invalid_type_error: 'Role must be valid'
     })
@@ -80,6 +80,30 @@ const createOwnerSchema = zod_1.z.object({
         businessPhone: zod_1.z.string({ required_error: 'Business phone is required!' })
     })
 });
+// New schema for admin to update any user's information
+const adminUpdateUserSchema = zod_1.z.object({
+    name: zod_1.z.string().optional(),
+    email: zod_1.z.string().email().optional(),
+    title: zod_1.z.string().optional(),
+    description: zod_1.z.string().optional(),
+    avatar: zod_1.z.string().optional(),
+    address: zod_1.z.string().optional(),
+    phone: zod_1.z.string().optional(),
+    city: zod_1.z.string().optional(),
+    country: zod_1.z.string().optional(),
+    facebook: zod_1.z.string().optional(),
+    twitter: zod_1.z.string().optional(),
+    linkedin: zod_1.z.string().optional(),
+    instagram: zod_1.z.string().optional(),
+    status: zod_1.z.enum(['ACTIVE', 'INACTIVE']).optional(),
+    businessInfo: businessInfoSchema.optional()
+});
+// New schema for admin to update any user's password
+const adminUpdatePasswordSchema = zod_1.z.object({
+    password: zod_1.z
+        .string({ required_error: 'New Password is required!' })
+        .min(6, { message: 'new password must have at least 6 characters' })
+});
 const userValidator = {
     registerSchema,
     loginSchema,
@@ -88,6 +112,8 @@ const userValidator = {
     createUserSchema,
     updateUserRoleSchema,
     updateUserStatusSchema,
-    createOwnerSchema
+    createOwnerSchema,
+    adminUpdateUserSchema,
+    adminUpdatePasswordSchema
 };
 exports.default = userValidator;

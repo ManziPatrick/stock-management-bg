@@ -84,7 +84,7 @@ class UserServices {
   }
 
   // Update user role
-  async updateUserRole(userId: string, role: 'ADMIN' | 'KEEPER' | 'USER') {
+  async updateUserRole(userId: string, role: 'ADMIN' | 'KEEPER' | 'USER' | 'ACCOUNTANT') {
     const user = await this.model.findById(userId);
     
     if (!user) {
@@ -143,6 +143,31 @@ class UserServices {
     const updatedUser = await this.model.findByIdAndUpdate(userId, { password: hashedPassword }, { new: true });
 
     return updatedUser;
+  }
+
+  // New method: Admin update user's information
+  async adminUpdateUser(userId: string, payload: Partial<IUser>) {
+    const user = await this.model.findById(userId);
+    
+    if (!user) {
+      throw new CustomError(httpStatus.NOT_FOUND, 'User not found');
+    }
+    
+    return this.model.findByIdAndUpdate(userId, payload, { new: true })
+      .populate('createdBy', 'name email role');
+  }
+
+  // New method: Admin update user's password
+  async adminUpdatePassword(userId: string, newPassword: string) {
+    const user = await this.model.findById(userId);
+    console.log(userId, newPassword);
+    
+    if (!user) {
+      throw new CustomError(httpStatus.NOT_FOUND, 'User not found');
+    }
+    
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    return this.model.findByIdAndUpdate(userId, { password: hashedPassword }, { new: true });
   }
 }
 

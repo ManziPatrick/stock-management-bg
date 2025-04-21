@@ -85,7 +85,7 @@ class UserControllers {
                 });
                 return;
             }
-            // Admin can only create admin (of same company), keeper or user
+            // Admin can only create admin (of same company), keeper, accountant or user
             if (req.user.role === 'ADMIN') {
                 // Get admin's business info
                 const admin = yield this.services.getSelf(req.user._id);
@@ -146,9 +146,9 @@ class UserControllers {
             }
             // Regular admin can only update their created users
             const user = yield this.services.getUserById(req.params.userId);
-            if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-                throw new customError_1.default(http_status_1.default.FORBIDDEN, 'You can only update roles for users you created');
-            }
+            // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+            //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
+            // }
             // Regular admin can't set someone to SUPER_ADMIN
             if (req.body.role === 'SUPER_ADMIN') {
                 throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot set user to super admin role');
@@ -173,9 +173,9 @@ class UserControllers {
             // Regular admin can only delete their created users
             else if (req.user.role === 'ADMIN') {
                 const user = yield this.services.getUserById(req.params.id);
-                if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-                    throw new customError_1.default(http_status_1.default.FORBIDDEN, 'You can only delete users you created');
-                }
+                // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+                //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users you created');
+                // }
                 if (user.role === 'SUPER_ADMIN') {
                     throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot delete super admin accounts');
                 }
@@ -219,6 +219,70 @@ class UserControllers {
                 statusCode: http_status_1.default.OK,
                 message: 'Password changed successfully!',
                 data: result,
+            });
+        }));
+        // NEW: Admin updates user information
+        this.adminUpdateUser = (0, asyncHandler_1.default)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            const { userId } = req.params;
+            // Check permissions
+            if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+                throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Only admins can edit users');
+            }
+            // Super admin can edit any user except other super admins
+            if (req.user.role === 'SUPER_ADMIN') {
+                const user = yield this.services.getUserById(userId);
+                if (user.role === 'SUPER_ADMIN' && userId !== req.user._id.toString()) {
+                    throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot edit other super admin accounts');
+                }
+            }
+            // Admin can only edit users they created
+            else if (req.user.role === 'ADMIN') {
+                const user = yield this.services.getUserById(userId);
+                // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+                //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only edit users you created');
+                // }
+                if (user.role === 'SUPER_ADMIN') {
+                    throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot edit super admin accounts');
+                }
+            }
+            const result = yield this.services.adminUpdateUser(userId, req.body);
+            (0, sendResponse_1.default)(res, {
+                success: true,
+                statusCode: http_status_1.default.OK,
+                message: 'User information updated successfully!',
+                data: result,
+            });
+        }));
+        // NEW: Admin updates user's password
+        this.adminUpdatePassword = (0, asyncHandler_1.default)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            const { userId } = req.params;
+            const { password } = req.body;
+            // Check permissions
+            if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+                throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Only admins can change user passwords');
+            }
+            // Super admin can edit any user's password except other super admins
+            if (req.user.role === 'SUPER_ADMIN') {
+                const user = yield this.services.getUserById(userId);
+                if (user.role === 'SUPER_ADMIN' && userId !== req.user._id.toString()) {
+                    throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot change other super admin passwords');
+                }
+            }
+            // Admin can only change passwords for users they created
+            else if (req.user.role === 'ADMIN') {
+                const user = yield this.services.getUserById(userId);
+                // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
+                //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only change passwords for users you created');
+                // }
+                if (user.role === 'SUPER_ADMIN') {
+                    throw new customError_1.default(http_status_1.default.FORBIDDEN, 'Cannot change super admin passwords');
+                }
+            }
+            const result = yield this.services.adminUpdatePassword(userId, password);
+            (0, sendResponse_1.default)(res, {
+                success: true,
+                statusCode: http_status_1.default.OK,
+                message: 'User password updated successfully!',
             });
         }));
     }

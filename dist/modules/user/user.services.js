@@ -150,6 +150,29 @@ class UserServices {
             return updatedUser;
         });
     }
+    // New method: Admin update user's information
+    adminUpdateUser(userId, payload) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const user = yield this.model.findById(userId);
+            if (!user) {
+                throw new customError_1.default(http_status_1.default.NOT_FOUND, 'User not found');
+            }
+            return this.model.findByIdAndUpdate(userId, payload, { new: true })
+                .populate('createdBy', 'name email role');
+        });
+    }
+    // New method: Admin update user's password
+    adminUpdatePassword(userId, newPassword) {
+        return __awaiter(this, void 0, void 0, function* () {
+            const user = yield this.model.findById(userId);
+            console.log(userId, newPassword);
+            if (!user) {
+                throw new customError_1.default(http_status_1.default.NOT_FOUND, 'User not found');
+            }
+            const hashedPassword = yield bcrypt_1.default.hash(newPassword, 10);
+            return this.model.findByIdAndUpdate(userId, { password: hashedPassword }, { new: true });
+        });
+    }
 }
 const userServices = new UserServices();
 exports.default = userServices;
