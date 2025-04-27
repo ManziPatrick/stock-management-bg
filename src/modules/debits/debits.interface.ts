@@ -25,20 +25,34 @@ export interface CreateDebitDto {
   buyerName: string;
   buyerPhoneNumber: string;
   buyerEmail: string;
-  saleId: string;
-  status: 'PENDING' | 'COMPLETED' | 'OVERDUE';
+  saleId?: string;
+  status?: 'PENDING' | 'COMPLETED' | 'OVERDUE';
   description?: string;
 }
 
 export interface UpdateDebitDto {
+  productName?: string;
+  totalAmount?: number;
   paidAmount?: number;
+  additionalPayment?: number; // New field to handle additional payments
   remainingAmount?: number;
   dueDate?: Date;
-  status?: 'PENDING' | 'COMPLETED' | 'OVERDUE';
-  description?: string;
+  buyerName?: string;
   buyerPhoneNumber?: string;
   buyerEmail?: string;
+  status?: 'PENDING' | 'COMPLETED' | 'OVERDUE';
+  description?: string;
 }
+
+// export interface UpdateDebitDto {
+//   paidAmount?: number;
+//   remainingAmount?: number;
+//   dueDate?: Date;
+//   status?: 'PENDING' | 'COMPLETED' | 'OVERDUE';
+//   description?: string;
+//   buyerPhoneNumber?: string;
+//   buyerEmail?: string;
+// }
 
 export interface DebitQueryParams {
   page?: number;

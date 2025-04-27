@@ -11,8 +11,17 @@ export const getExpenses = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Extract page and limit from query parameters
-    const { page = 1, limit = 10, search = '', status = 'ACTIVE' } = req.query;
+    // Extract query parameters
+    const { 
+      page = 1, 
+      limit = 10, 
+      search = '', 
+      status = 'ACTIVE',
+      sortField = 'date',
+      sortOrder = 'desc',
+      category,
+      paymentMethod
+    } = req.query;
 
     // Convert page and limit to numbers
     const pageNumber = parseInt(page as string, 10);
@@ -38,7 +47,11 @@ export const getExpenses = async (
       limit: limitNumber,
       search: search as string,
       status: status as string,
-      createdBy
+      createdBy,
+      sortField: sortField as string,
+      sortOrder: sortOrder as string,
+      category: category as string,
+      paymentMethod: paymentMethod as string
     });
 
     res.status(200).json({
@@ -47,11 +60,10 @@ export const getExpenses = async (
       message: 'Expenses retrieved successfully',
       data: expensesData.data,
       meta: expensesData.meta,
-      pagination: {
-        currentPage: pageNumber,
-        totalPages: expensesData.meta.totalPages,
-        totalExpenses: expensesData.meta.total,
-      },
+      total: expensesData.meta.total,
+      totalPages: expensesData.meta.totalPages,
+      page: pageNumber,
+      limit: limitNumber
     });
   } catch (error) {
     console.error('Error fetching expenses:', error);
@@ -82,7 +94,7 @@ export const addExpense = async (
     const expenseData: Partial<IExpense> = {
       ...validation.data,
       createdBy: req.user._id,
-      date: new Date(validation.data.date), // Ensure date is properly converted
+      date: validation.data.date ? new Date(validation.data.date) : new Date(), // Use current date if not provided
     };
 
     const expense = await createExpense(expenseData);
@@ -122,13 +134,13 @@ export const removeExpense = async (
       throw new ApiError(403, 'You do not have permission to delete this expense');
     }
 
-    await deleteExpense(id);
+    const deletedExpense = await deleteExpense(id);
 
     res.status(200).json({
       success: true,
       statusCode: 200,
       message: 'Expense deleted successfully',
-      data: null,
+      data: deletedExpense,
     });
   } catch (error) {
     console.error('Error deleting expense:', error);

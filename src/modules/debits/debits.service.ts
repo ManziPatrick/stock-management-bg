@@ -4,6 +4,7 @@ import { CreateDebitDto, UpdateDebitDto, DebitQueryParams, IDebit } from './debi
 import { AppError } from '../utils/appError';
 import nodemailer from 'nodemailer';
 import User from '../user/user.model';
+import SaleTransaction from '../sale/sale.model';
 
 export class DebitService {
   private transporter: nodemailer.Transporter;
@@ -485,16 +486,30 @@ export class DebitService {
   }
 
   async createDebit(data: CreateDebitDto): Promise<IDebit> {
-    try {
-      const debit = await DebitModel.create(data);
+    // Check if sale exists
+    if (data.saleId) {
+      const sale = await SaleTransaction.findById(data.saleId);
+      if (!sale) {
+        throw new AppError('Sale not found', 404);
+      }
       
-      // Send notification email
-      await this.sendDebitNotification(debit, 'created');
-      
-      return debit;
-    } catch (error) {
-      throw new AppError('Failed to create debit record', 400);
+      // Update sale status to credit if it's not already
+      if (sale.status !== 'credit') {
+        await SaleTransaction.findByIdAndUpdate(
+          data.saleId,
+          { $set: { status: 'credit' } },
+          { new: true }
+        );
+      }
     }
+    
+    // Create debit record
+    const debit = await DebitModel.create(data);
+    
+    // Send notification
+    await this.sendDebitNotification(debit, 'created');
+    
+    return debit;
   }
 
   async getAllDebits(queryParams: DebitQueryParams) {
@@ -567,7 +582,27 @@ export class DebitService {
     if (!oldDebit) {
       throw new AppError('Debit record not found', 404);
     }
-
+  
+    // Calculate new remaining amount if paid amount is updated
+    let newRemainingAmount = oldDebit.remainingAmount;
+    if (data.paidAmount !== undefined) {
+      // If only an additional payment is provided
+      if (data.additionalPayment !== undefined && data.paidAmount === undefined) {
+        data.paidAmount = oldDebit.paidAmount + data.additionalPayment;
+        delete data.additionalPayment; // Remove it so it's not saved in the DB
+      }
+      
+      newRemainingAmount = oldDebit.totalAmount - data.paidAmount;
+      data.remainingAmount = newRemainingAmount;
+      
+      // Set status based on remaining amount
+      if (newRemainingAmount <= 0) {
+        data.status = 'COMPLETED';
+      } else if (data.status !== 'OVERDUE') {
+        data.status = 'PENDING';
+      }
+    }
+  
     const debit = await DebitModel.findByIdAndUpdate(
       id,
       { $set: data },
@@ -578,20 +613,128 @@ export class DebitService {
       throw new AppError('Debit record not found', 404);
     }
     
+    // If this debit is linked to a sale, create a new payment transaction 
+    // when additional payment is made
+    if (debit.saleId && (oldDebit.paidAmount !== debit.paidAmount)) {
+      const paymentAmount = debit.paidAmount - oldDebit.paidAmount;
+      
+      if (paymentAmount > 0) {
+        try {
+          // Update the related sale transaction with the new payment amount
+          const sale = await SaleTransaction.findById(debit.saleId);
+          
+          if (sale) {
+            // Update the paidAmount in the sale record
+            const newSalePaidAmount = (sale.paidAmount || 0) + paymentAmount;
+            
+            // Update sale status if payment is complete
+            let saleStatus = sale.status;
+            if (newSalePaidAmount >= sale.totalAmount) {
+              saleStatus = 'approved'; // Set to approved if fully paid
+            }
+            
+            // Update the sale record
+            await SaleTransaction.findByIdAndUpdate(
+              debit.saleId,
+              { 
+                $set: { 
+                  paidAmount: newSalePaidAmount,
+                  status: saleStatus
+                } 
+              },
+              { new: true }
+            );
+            
+            console.log(`Updated sale ${debit.saleId} with payment of ${paymentAmount}. New paid amount: ${newSalePaidAmount}`);
+          } else {
+            console.error(`Referenced sale ${debit.saleId} not found`);
+          }
+        } catch (error) {
+          console.error(`Error updating related sale ${debit.saleId}:`, error);
+          // We don't want to fail the debit update if the sale update fails
+          // But we should log this for investigation
+        }
+      }
+    }
+    
+    // Check if debit is now complete and update the sale accordingly
+    if (data.status === 'COMPLETED' && oldDebit.status !== 'COMPLETED' && debit.saleId) {
+      try {
+        // When debit is marked as completed, ensure the sale is marked as approved
+        await SaleTransaction.findByIdAndUpdate(
+          debit.saleId,
+          { 
+            $set: { 
+              status: 'approved',
+              paidAmount: debit.totalAmount // Ensure the paid amount matches the total
+            } 
+          }
+        );
+        console.log(`Marked sale ${debit.saleId} as approved due to completed debit payment`);
+      } catch (error) {
+        console.error(`Error updating sale status for ${debit.saleId}:`, error);
+      }
+    }
+    
     // Send update notification
     await this.sendDebitNotification(debit, 'updated', undefined, data);
     
-    // Check if payment is now completed
-    if (debit.remainingAmount === 0 && oldDebit.remainingAmount !== 0) {
-      debit.status = 'COMPLETED';
-      await debit.save();
-      
-      // Send completion notification
-      await this.sendDebitNotification(debit, 'completed');
-    }
-    
     return debit;
   }
+
+  // Method to handle partial payments
+  async makePayment(id: string, amount: number): Promise<IDebit> {
+    const debit = await DebitModel.findById(id);
+    
+    if (!debit) {
+      throw new AppError('Debit record not found', 404);
+    }
+    
+    if (amount <= 0) {
+      throw new AppError('Payment amount must be greater than zero', 400);
+    }
+    
+    // Update paid and remaining amounts
+    const newPaidAmount = debit.paidAmount + amount;
+    const newRemainingAmount = debit.totalAmount - newPaidAmount;
+    
+    // Ensure we don't overpay
+    if (newRemainingAmount < 0) {
+      throw new AppError('Payment amount exceeds remaining balance', 400);
+    }
+    
+    // Determine new status
+    const newStatus = newRemainingAmount === 0 ? 'COMPLETED' : 'PENDING';
+    
+    // Update the debit record
+    const updatedDebit = await DebitModel.findByIdAndUpdate(
+      id,
+      { 
+        $set: { 
+          paidAmount: newPaidAmount, 
+          remainingAmount: newRemainingAmount,
+          status: newStatus
+        } 
+      },
+      { new: true, runValidators: true }
+    );
+    
+    if (!updatedDebit) {
+      throw new AppError('Failed to update debit record', 500);
+    }
+    
+    // If this debit is linked to a sale, record the payment
+    if (updatedDebit.saleId) {
+      // Record payment in your system
+      // This could involve updating the original sale or creating a payment record
+    }
+    
+    // Send notification
+    await this.sendDebitNotification(updatedDebit, 'payment', { amount });
+    
+    return updatedDebit;
+  }
+  
   async deleteDebit(id: string): Promise<void> {
     const result = await DebitModel.findByIdAndDelete(id);
     

@@ -23,9 +23,12 @@ class SaleController {
       page: Number(req.query.page) || 1,
       limit: Number(req.query.limit) || 10,
       sortBy: req.query.sortBy as string || 'createdAt',
-      sortOrder: (req.query.sortOrder as string || 'desc').toLowerCase()
+      sortOrder: (req.query.sortOrder as string || 'desc').toLowerCase(),
+      userId: req.user._id,         
+      userRole: req.user.role
     };
 
+    console.log(query, 'query');
     const result = await saleServices.readAll(query);
     return sendResponse(res, {
       statusCode: httpStatus.OK,
@@ -79,6 +82,18 @@ class SaleController {
       success: true,
       message: `Sale ${status} successfully`,
       data: result
+    });
+  });
+
+  getTotalCredit = asyncHandler(async (req: Request, res: Response) => {
+    const { user } = req;
+    const result = await saleServices.getTotalCredit(user._id);
+    
+    return sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: 'Credit statistics retrieved successfully',
+      data: result.data
     });
   });
   

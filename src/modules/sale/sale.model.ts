@@ -20,14 +20,16 @@ const saleTransactionSchema = new Schema<ISaleTransaction>(
       default: 'cash'
     },
     paymentDetails: {
-      mode: { type: String, required: true }
+      mode: { type: String, required: true },
+      momoNumber: { type: String }
     },
     products: [productSaleSchema],
     transactionId: { type: Schema.Types.ObjectId, required: true, index: true },
     totalAmount: { type: Number, required: true },
+    paidAmount: { type: Number },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected','credit'],
+      enum: ['pending', 'approved', 'rejected', 'credit'],
       default: 'pending'
     }
   },

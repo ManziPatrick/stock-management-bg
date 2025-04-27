@@ -1,9 +1,11 @@
+//@ts-nocheck
 import mongoose, { Types } from 'mongoose';
 import BaseServices from '../baseServices';
 import SaleTransaction from './sale.model';
 import Product from '../product/product.model';
 import CustomError from '../../errors/customError';
 import { IProductSale } from './sale.interface';
+import { DebitModel } from '../debits/debits.models';
 
 import sortAndPaginatePipeline from '../../lib/sortAndPaginate.pipeline';
 
@@ -52,19 +54,19 @@ class SaleServices extends BaseServices<any> {
     try {
       const transactionId = new mongoose.Types.ObjectId();
       const saleDate = new Date(payload.date);
-
+  
       // Process all products
       const processedProducts = await Promise.all(
         payload.products.map(product => this.processProduct(product))
       );
-
+  
       // Calculate total amount
       const totalAmount = processedProducts.reduce(
         (sum, product) => sum + (product.quantity * product.SellingPrice),
         0
       );
-
-      // Create sale transaction
+  
+      // Create sale transaction - always start with "pending" status
       const saleTransaction = await SaleTransaction.create({
         user: userId,
         buyerName: payload.buyerName,
@@ -73,12 +75,20 @@ class SaleServices extends BaseServices<any> {
         paymentDetails: payload.paymentDetails,
         products: processedProducts,
         transactionId,
-        totalAmount
+        totalAmount,
+        status: 'pending',
+        // Store the intended payment info for later processing by accountant
+        intendedAsCreditSale: payload.status === 'credit',
+        // Store the paidAmount directly in the sale transaction for future credit processing
+        ...(payload.debitDetails && { 
+          paidAmount: payload.debitDetails.paidAmount || 0,
+          debitDetails: payload.debitDetails  // Store full debit details for later processing
+        })
       });
-
+  
       // Calculate additional statistics
       const statistics = await this.calculateStatistics(userId);
-
+  
       return {
         transaction: saleTransaction,
         statistics
@@ -136,8 +146,17 @@ class SaleServices extends BaseServices<any> {
   }
 
   async calculatePaymentStats(matchStage: any = {}) {
+    // Update the match stage to include only approved sales
+    const updatedMatchStage = {
+      ...matchStage,
+      $match: {
+        ...matchStage.$match,
+        status: { $in: ['approved', 'credit'] } // Only count approved and credit sales
+      }
+    };
+  
     return await this.model.aggregate([
-      { $match: matchStage },
+      updatedMatchStage,
       {
         $group: {
           _id: null,
@@ -153,7 +172,16 @@ class SaleServices extends BaseServices<any> {
           transferTotal: {
             $sum: { $cond: [{ $eq: ['$paymentMode', 'transfer'] }, '$totalAmount', 0] }
           },
-          totalAmount: { $sum: '$totalAmount' }
+       
+          totalAmount: { 
+            $sum: { 
+              $cond: [
+                { $eq: ['$status', 'credit'] },
+                { $ifNull: ['$paidAmount', 0] }, // Use paidAmount for credit sales
+                '$totalAmount' 
+              ] 
+            } 
+          }
         }
       }
     ]);
@@ -202,158 +230,221 @@ class SaleServices extends BaseServices<any> {
   }
 
 
- async readAll(query: Record<string, unknown> = {}) {
-  const search = query.search ? (query.search as string) : '';
-  const page = query.page ? Number(query.page) : 1;
-  const limit = query.limit ? Number(query.limit) : 10;
-  const userId = query.userId as string;
-
-  // Base match stage for search criteria
-  const matchStage = {
-    $match: {
-      $or: [
-        { productName: { $regex: search, $options: 'i' } },
-        { buyerName: { $regex: search, $options: 'i' } },
-      ],
-    },
-  };
-
-  try {
-    // Get paginated results first - without population
-    const skip = (page - 1) * limit;
-    const data = await this.model
-      .find(matchStage.$match)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+  async readAll(query: Record<string, unknown> = {}) {
+    const search = query.search ? (query.search as string) : '';
+    const page = query.page ? Number(query.page) : 1;
+    const limit = query.limit ? Number(query.limit) : 10;
+    const userId = query.userId as string;
+    const userRole = query.userRole as string;
     
-    // Overall Sales Statistics with Payment Mode Totals
-    const [stats] = await this.model.aggregate([
-      matchStage,
-      {
-        $unwind: "$products"  // Unwind the products array
+    let matchStage: any = {
+      $match: {
+        $or: [
+          { productName: { $regex: search, $options: 'i' } },
+          { buyerName: { $regex: search, $options: 'i' } },
+        ],
       },
-      {
-        $group: {
-          _id: null,
-          totalQuantitySold: { $sum: "$products.quantity" },
-          totalSaleAmount: { $sum: "$totalAmount" },
-          totalSellingPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] } 
-          },
-          totalProductPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.productPrice"] } 
-          },
-          totalMarginProfit: {
-            $sum: { 
-              $multiply: [
-                "$products.quantity", 
-                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
-              ] 
-            }
-          },
-          averageSaleAmount: { $avg: "$totalAmount" },
-          totalCount: { $sum: 1 },
-          cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
-          momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
-          chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
-          transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
-        }
-      }
-    ]);
-
-    // Get expenses for the entire period
-    const totalExpenses = await this.calculateExpenses(userId);
-    
-    // Add expenses to stats
-    const statsWithExpenses = stats ? {
-      ...stats,
-      expenses: totalExpenses,
-      netProfit: stats.totalMarginProfit - totalExpenses
-    } : {
-      totalQuantitySold: 0,
-      totalSaleAmount: 0,
-      totalSellingPrice: 0,
-      totalProductPrice: 0,
-      totalMarginProfit: 0,
-      expenses: totalExpenses,
-      netProfit: -totalExpenses,
-      averageSaleAmount: 0,
-      totalCount: 0,
-      cashTotal: 0,
-      momoTotal: 0,
-      chequeTotal: 0,
-      transferTotal: 0
     };
+    
+    // If user is accountant, show them all pending sales to review
+    if (userRole === 'ACCOUNTANT') {
+      matchStage.$match.status = { $in: ['approved', 'credit', 'rejected', 'pending'] };
+    } else {
+      matchStage.$match.status = { $in: ['approved', 'credit', 'rejected'] };
+    }
   
-    // Rest of the aggregation queries
-    const [dailyStats, monthlyStats, yearlyStats, recentSales] = await Promise.all([
-      this.getDailyStats(matchStage),
-      this.getMonthlyStats(matchStage),
-      this.getYearlyStats(matchStage),
-      this.getRecentSales(matchStage)
-    ]);
-
-    
-    // Add expenses to dailyStats
-    const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats, userId);
-    
-    // Add expenses to monthlyStats
-    const monthlyStatsWithExpenses = await this.addExpensesToMonthlyStats(monthlyStats, userId);
-    
-    // Add expenses to yearlyStats
-    const yearlyStatsWithExpenses = await this.addExpensesToYearlyStats(yearlyStats, userId);
-
-    const totalCount = await this.model.countDocuments(matchStage.$match);
-    const [totalRevenue] = await this.model.aggregate([
-      matchStage, // Add this to filter results based on the search
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$totalAmount' },
+    try {
+      // Get paginated results
+      const skip = (page - 1) * limit;
+      const data = await this.model
+        .find(matchStage.$match)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean();
+      
+      // For credit sales, fetch the related debit records to show updated payment status
+      const saleIds = data.filter(sale => sale.status === 'credit').map(sale => sale._id.toString());
+      let debitRecords = [];
+      
+      if (saleIds.length > 0) {
+        debitRecords = await DebitModel.find({ saleId: { $in: saleIds } }).lean();
+        
+        // Enhance credit sales with their debit information
+        data.forEach(sale => {
+          if (sale.status === 'credit') {
+            const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
+            if (relatedDebit) {
+              sale.paidAmount = relatedDebit.paidAmount;
+              sale.remainingAmount = relatedDebit.remainingAmount;
+              sale.debitStatus = relatedDebit.status;
+              sale.dueDate = relatedDebit.dueDate;
+            }
+          }
+        });
+      }
+      
+      // Calculate margins and totals correctly
+      let totalSaleAmount = 0;
+      let totalMarginAmount = 0;
+      let totalCostPrice = 0;
+      let totalCount = 0;
+      let cashTotal = 0;
+      let momoTotal = 0;
+      let chequeTotal = 0;
+      let transferTotal = 0;
+      let creditPaidTotal = 0;
+      
+      // Process each sale to calculate margins correctly
+      data.forEach(sale => {
+        totalCount++;
+        
+        // Add to total sale amount based on status
+        const saleAmount = sale.status === 'credit' ? (sale.paidAmount || 0) : (sale.totalAmount || 0);
+        totalSaleAmount += saleAmount;
+        
+        // Add to appropriate payment method total
+        if (sale.paymentMode === 'cash') {
+          cashTotal += saleAmount;
+        } else if (sale.paymentMode === 'momo') {
+          momoTotal += saleAmount;
+        } else if (sale.paymentMode === 'cheque') {
+          chequeTotal += saleAmount;
+        } else if (sale.paymentMode === 'transfer') {
+          transferTotal += saleAmount;
+        }
+        
+        // Track paid amounts for credit sales separately
+        if (sale.status === 'credit') {
+          creditPaidTotal += (sale.paidAmount || 0);
+        }
+        
+        // Calculate margin and cost price for each product in the sale
+        if (Array.isArray(sale.products)) {
+          let saleMargin = 0;
+          let saleCost = 0;
+          
+          sale.products.forEach(product => {
+            const quantity = product.quantity || 0;
+            const sellingPrice = product.SellingPrice || 0;
+            const productPrice = product.productPrice || 0;
+            
+            // Calculate margin per unit and total margin for this product
+            const marginPerUnit = sellingPrice - productPrice;
+            const productMargin = marginPerUnit * quantity;
+            const productCost = productPrice * quantity;
+            
+            saleMargin += productMargin;
+            saleCost += productCost;
+          });
+          
+          // For credit sales, adjust the margin based on paid proportion
+          if (sale.status === 'credit' && sale.totalAmount > 0) {
+            const paidProportion = (sale.paidAmount || 0) / sale.totalAmount;
+            saleMargin = saleMargin * paidProportion;
+          }
+          
+          // Add to running totals
+          totalMarginAmount += saleMargin;
+          totalCostPrice += saleCost;
+          
+          // Add calculated values to sale object for display
+          sale.marginAmount = saleMargin;
+          sale.costPrice = saleCost;
+        } else {
+          // Fallback for any sales that might not have products array
+          sale.marginAmount = 0;
+          sale.costPrice = 0;
+        }
+      });
+      
+      // Get credit statistics
+      const [creditStats] = await this.model.aggregate([
+        {
+          $match: {
+            status: 'credit',
+            $or: [
+              { productName: { $regex: search, $options: 'i' } },
+              { buyerName: { $regex: search, $options: 'i' } },
+            ],
+          }
         },
-      },
-    ]);
-
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Sales retrieved successfully!',
-      data,
-      meta: {
-        page,
-        limit,
-        total: totalCount,
-        totalPages: Math.ceil(totalCount / limit),
-        totalSales: {
-          stats: statsWithExpenses,
-          dailyStats: dailyStatsWithExpenses,
-          monthlyStats: monthlyStatsWithExpenses,
-          yearlyStats: yearlyStatsWithExpenses,
-          recentSales,
-          totalRevenue: totalRevenue?.total || 0,
+        {
+          $group: {
+            _id: null,
+            totalCreditAmount: { $sum: "$totalAmount" },
+            totalCreditCount: { $sum: 1 },
+            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
+            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+          }
+        }
+      ]) || { totalCreditAmount: 0, totalCreditCount: 0, totalPaidAmount: 0, totalRemainingCredit: 0 };
+      
+      // Calculate credit margin
+      let totalCreditMargin = 0;
+      const creditSales = data.filter(sale => sale.status === 'credit');
+      creditSales.forEach(sale => {
+        totalCreditMargin += (sale.marginAmount || 0);
+      });
+    
+      // Get expenses for the entire period
+      const totalExpenses = await this.calculateExpenses(userId);
+      
+      // Prepare simplified stats with focus on totals
+      const simplifiedStats = {
+        totalSaleAmount: totalSaleAmount || 0,
+        totalMarginAmount: totalMarginAmount || 0,
+        totalCostPrice: totalCostPrice || 0,
+        netProfit: (totalMarginAmount || 0) - (totalExpenses || 0),
+        totalCount: totalCount || 0,
+        cashTotal: cashTotal || 0,
+        momoTotal: momoTotal || 0,
+        chequeTotal: chequeTotal || 0,
+        transferTotal: transferTotal || 0,
+        creditPaidTotal: creditPaidTotal || 0,
+        expenses: totalExpenses || 0,
+        // Add credit stats
+        totalCreditAmount: creditStats?.totalCreditAmount || 0,
+        totalCreditCount: creditStats?.totalCreditCount || 0,
+        totalPaidCreditAmount: creditStats?.totalPaidAmount || 0,
+        totalRemainingCredit: creditStats?.totalRemainingCredit || 0,
+        totalCreditMargin: totalCreditMargin || 0
+      };
+    
+      const totalCount2 = await this.model.countDocuments(matchStage.$match);
+    
+      return {
+        statusCode: 200,
+        success: true,
+        message: 'Sales retrieved successfully!',
+        data,
+        meta: {
+          page,
+          limit,
+          total: totalCount2,
+          totalPages: Math.ceil(totalCount2 / limit),
+          totalSales: {
+            stats: simplifiedStats
+          },
         },
-      },
-    };
-  } catch (error) {
-    console.error('Error fetching sales:', error);
-    throw new Error('Failed to fetch sales.');
+      };
+    } catch (error) {
+      console.error('Error fetching sales:', error);
+      throw new Error('Failed to fetch sales.');
+    }
   }
-}
+  
 
-// Helper methods to add expenses to stats
 private async addExpensesToDailyStats(dailyStats: any[], userId: string) {
   if (!dailyStats || dailyStats.length === 0) return [];
   
-  // Extract all unique dates from sales
   const dates = dailyStats.map(stat => ({
     year: stat._id.year,
     month: stat._id.month,
     day: stat._id.day
   }));
   
-  // Get all daily expenses for these dates
+ 
   const dailyExpenses = await Expense.aggregate([
     {
       $match: {
@@ -390,6 +481,7 @@ private async addExpensesToDailyStats(dailyStats: any[], userId: string) {
     };
   });
 }
+ 
 
 private async addExpensesToMonthlyStats(monthlyStats: any[], userId: string) {
   if (!monthlyStats || monthlyStats.length === 0) return [];
@@ -551,8 +643,17 @@ private async getRecentSales(matchStage: any) {
   }
 // In the getDailyStats method
 private async getDailyStats(matchStage: any) {
+
+  const statusMatchStage = {
+    ...matchStage,
+    $match: {
+      ...matchStage.$match,
+      status: { $in: ['approved','pending', undefined, null] } // Include legacy records without status
+    }
+  };
   return this.model.aggregate([
     matchStage,
+    statusMatchStage,
     // First group by transaction to get accurate transaction counts
     {
       $group: {
@@ -704,8 +805,16 @@ private async getDailyStats(matchStage: any) {
 }
 
 private async getMonthlyStats(matchStage: any) {
+  const statusMatchStage = {
+    ...matchStage,
+    $match: {
+      ...matchStage.$match,
+      status: { $in: ['approved', 'credit'] } // Only include approved and credit sales
+    }
+  };
+  
   return this.model.aggregate([
-    matchStage,
+    statusMatchStage,
     // First group by transaction
     {
       $group: {
@@ -713,9 +822,18 @@ private async getMonthlyStats(matchStage: any) {
           transactionId: "$transactionId",
           year: { $year: "$date" },
           month: { $month: "$date" },
-          paymentMode: "$paymentMode"
+          paymentMode: "$paymentMode",
+          status: "$status" // Track status for credit sales
         },
-        total: { $first: "$totalAmount" },
+        total: { 
+          $first: { 
+            $cond: [
+              { $eq: ["$status", "credit"] },
+              { $ifNull: ["$paidAmount", 0] },
+              "$totalAmount"
+            ] 
+          } 
+        },
         count: { $sum: 1 }
       }
     },
@@ -785,7 +903,7 @@ private async getMonthlyStats(matchStage: any) {
         }
       }
     },
-    // Calculate profit separately
+    // Calculate profit separately with the same credit handling approach
     {
       $lookup: {
         from: "saletransactions",
@@ -799,7 +917,8 @@ private async getMonthlyStats(matchStage: any) {
               $expr: {
                 $and: [
                   { $eq: [{ $year: "$date" }, "$$year"] },
-                  { $eq: [{ $month: "$date" }, "$$month"] }
+                  { $eq: [{ $month: "$date" }, "$$month"] },
+                  { $in: ["$status", ["approved", "credit"]] }
                 ]
               }
             }
@@ -807,15 +926,46 @@ private async getMonthlyStats(matchStage: any) {
           { $unwind: "$products" },
           {
             $group: {
-              _id: null,
+              _id: {
+                status: "$status"
+              },
               monthlyProfit: {
                 $sum: {
-                  $multiply: [
-                    "$products.quantity",
-                    { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                  $cond: [
+                    { $eq: ["$status", "credit"] },
+                    // For credit sales, calculate profit based on paidAmount proportion
+                    {
+                      $multiply: [
+                        {
+                          $divide: [
+                            { $ifNull: ["$paidAmount", 0] },
+                            { $cond: [{ $eq: ["$totalAmount", 0] }, 1, "$totalAmount"] }
+                          ]
+                        },
+                        {
+                          $multiply: [
+                            "$products.quantity",
+                            { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                          ]
+                        }
+                      ]
+                    },
+                    // For approved sales, calculate regular profit
+                    {
+                      $multiply: [
+                        "$products.quantity",
+                        { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                      ]
+                    }
                   ]
                 }
               }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              monthlyProfit: { $sum: "$monthlyProfit" }
             }
           }
         ],
@@ -851,17 +1001,34 @@ private async getMonthlyStats(matchStage: any) {
 }
 
 private async getYearlyStats(matchStage: any) {
+  const statusMatchStage = {
+    ...matchStage,
+    $match: {
+      ...matchStage.$match,
+      status: { $in: ['approved', 'credit'] } // Only include approved and credit sales
+    }
+  };
+  
   return this.model.aggregate([
-    matchStage,
+    statusMatchStage,
     // First group by transaction
     {
       $group: {
         _id: {
           transactionId: "$transactionId",
           year: { $year: "$date" },
-          paymentMode: "$paymentMode"
+          paymentMode: "$paymentMode",
+          status: "$status"
         },
-        total: { $first: "$totalAmount" },
+        total: { 
+          $first: { 
+            $cond: [
+              { $eq: ["$status", "credit"] },
+              { $ifNull: ["$paidAmount", 0] },
+              "$totalAmount"
+            ] 
+          } 
+        },
         count: { $sum: 1 }
       }
     },
@@ -938,22 +1105,56 @@ private async getYearlyStats(matchStage: any) {
           {
             $match: {
               $expr: {
-                $eq: [{ $year: "$date" }, "$$year"]
+                $and: [
+                  { $eq: [{ $year: "$date" }, "$$year"] },
+                  { $in: ["$status", ["approved", "credit"]] }
+                ]
               }
             }
           },
           { $unwind: "$products" },
           {
             $group: {
-              _id: null,
+              _id: {
+                status: "$status"
+              },
               yearlyProfit: {
                 $sum: {
-                  $multiply: [
-                    "$products.quantity",
-                    { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                  $cond: [
+                    { $eq: ["$status", "credit"] },
+                    // For credit sales, calculate profit based on paidAmount proportion
+                    {
+                      $multiply: [
+                        {
+                          $divide: [
+                            { $ifNull: ["$paidAmount", 0] },
+                            { $cond: [{ $eq: ["$totalAmount", 0] }, 1, "$totalAmount"] }
+                          ]
+                        },
+                        {
+                          $multiply: [
+                            "$products.quantity",
+                            { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                          ]
+                        }
+                      ]
+                    },
+                    // For approved sales, calculate regular profit
+                    {
+                      $multiply: [
+                        "$products.quantity",
+                        { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                      ]
+                    }
                   ]
                 }
               }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              yearlyProfit: { $sum: "$yearlyProfit" }
             }
           }
         ],
@@ -986,6 +1187,100 @@ private async getYearlyStats(matchStage: any) {
     },
     { $sort: { "_id.year": -1 } }
   ]);
+}
+
+async getTotalCredit(userId: string) {
+  try {
+    // Get all credit sales
+    const creditSales = await this.model.find({ 
+      user: userId,
+      status: 'credit'
+    });
+    
+    // Get all debit records related to these sales
+    const saleIds = creditSales.map(sale => sale._id.toString());
+    const debitRecords = await DebitModel.find({
+      saleId: { $in: saleIds }
+    });
+    
+    // Calculate statistics
+    const totalCreditAmount = creditSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+    const totalPaidAmount = debitRecords.reduce((sum, debit) => sum + debit.paidAmount, 0);
+    const totalRemainingAmount = debitRecords.reduce((sum, debit) => sum + debit.remainingAmount, 0);
+    
+    // Group credits by status
+    const pendingCredits = debitRecords.filter(debit => debit.status === 'PENDING');
+    const completedCredits = debitRecords.filter(debit => debit.status === 'COMPLETED');
+    const overdueCredits = debitRecords.filter(debit => debit.status === 'OVERDUE');
+    
+    // Group by date (current month, previous months)
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    
+    const currentMonthCredits = debitRecords.filter(debit => {
+      const debitDate = new Date(debit.createdAt);
+      return debitDate.getMonth() === currentMonth && debitDate.getFullYear() === currentYear;
+    });
+    
+    const previousMonthCredits = debitRecords.filter(debit => {
+      const debitDate = new Date(debit.createdAt);
+      const isPreviousMonth = (debitDate.getMonth() === currentMonth - 1 && debitDate.getFullYear() === currentYear) ||
+                              (currentMonth === 0 && debitDate.getMonth() === 11 && debitDate.getFullYear() === currentYear - 1);
+      return isPreviousMonth;
+    });
+    
+    // Credits that are due within the next 7 days
+    const nextWeekDueDate = new Date();
+    nextWeekDueDate.setDate(nextWeekDueDate.getDate() + 7);
+    
+    const upcomingDueCredits = debitRecords.filter(debit => {
+      const dueDate = new Date(debit.dueDate);
+      return dueDate > now && dueDate <= nextWeekDueDate && debit.status === 'PENDING';
+    });
+    
+    return {
+      statusCode: 200,
+      success: true,
+      message: 'Credit statistics retrieved successfully',
+      data: {
+        totalCreditAmount,
+        totalPaidAmount,
+        totalRemainingAmount,
+        totalCredits: debitRecords.length,
+        pendingCredits: {
+          count: pendingCredits.length,
+          amount: pendingCredits.reduce((sum, debit) => sum + debit.remainingAmount, 0)
+        },
+        completedCredits: {
+          count: completedCredits.length,
+          amount: completedCredits.reduce((sum, debit) => sum + debit.totalAmount, 0)
+        },
+        overdueCredits: {
+          count: overdueCredits.length,
+          amount: overdueCredits.reduce((sum, debit) => sum + debit.remainingAmount, 0)
+        },
+        currentMonthCredits: {
+          count: currentMonthCredits.length,
+          amount: currentMonthCredits.reduce((sum, debit) => sum + debit.totalAmount, 0),
+          paid: currentMonthCredits.reduce((sum, debit) => sum + debit.paidAmount, 0),
+          remaining: currentMonthCredits.reduce((sum, debit) => sum + debit.remainingAmount, 0)
+        },
+        previousMonthCredits: {
+          count: previousMonthCredits.length,
+          amount: previousMonthCredits.reduce((sum, debit) => sum + debit.totalAmount, 0),
+          paid: previousMonthCredits.reduce((sum, debit) => sum + debit.paidAmount, 0),
+          remaining: previousMonthCredits.reduce((sum, debit) => sum + debit.remainingAmount, 0)
+        },
+        upcomingDueCredits: {
+          count: upcomingDueCredits.length,
+          amount: upcomingDueCredits.reduce((sum, debit) => sum + debit.remainingAmount, 0)
+        }
+      }
+    };
+  } catch (error: any) {
+    throw new CustomError(400, error.message || 'Failed to get credit statistics');
+  }
 }
 
 
@@ -1029,234 +1324,319 @@ private async getYearlyStats(matchStage: any) {
   }
 
   async readAllDaily(query: { startDate?: string; endDate?: string; userId: string }) {
-    const { startDate, endDate } = query;
-    const startDateTime = startDate ? new Date(startDate) : new Date(new Date().setHours(0, 0, 0, 0));
+    const { startDate, endDate, userId } = query;
+    const startDateTime = startDate ? new Date(startDate) : new Date(new Date().setDate(new Date().getDate() - 30)); // Default to last 30 days
     const endDateTime = endDate ? new Date(endDate) : new Date(new Date().setHours(23, 59, 59, 999));
-
-    // First get sales stats
+  
     const matchStage = {
       $match: {
-        // user: new Types.ObjectId(userId),
-        createdAt: {
+        user: new Types.ObjectId(userId),
+        date: {
           $gte: startDateTime,
           $lte: endDateTime
-        }
+        },
+        status: { $in: ['approved', 'pending', undefined, null] }
       }
     };
-
-const stats = await this.model.aggregate([
-  matchStage,
-  {
-    $unwind: "$products"
-  },
-  {
-    $group: {
-      _id: {
-        year: { $year: "$createdAt" },
-        month: { $month: "$createdAt" },
-        day: { $dayOfMonth: "$createdAt" }
-      },
-      totalQuantitySold: { $sum: "$products.quantity" },
-      totalSaleAmount: { $sum: "$totalAmount" },
-      totalSellingPrice: { 
-        $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] } 
-      },
-      totalProductPrice: { 
-        $sum: { $multiply: ["$products.quantity", "$products.productPrice"] } 
-      },
-      totalMarginProfit: {
-        $sum: { 
-          $multiply: [
-            "$products.quantity", 
-            { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
-          ] 
-        }
-      },
-      averageSaleAmount: { $avg: "$totalAmount" },
-      totalCount: { $sum: 1 },
-      cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
-      momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
-      chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
-      transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
-    }
-  },
-  { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
-]);
-    // Now get total expenses for this period
-    const expenses = await Expense.aggregate([
-      {
-        $match: {
-          // createdBy: new Types.ObjectId(userId),
-          status: 'ACTIVE',
-          date: {
-            $gte: startDateTime,
-            $lte: endDateTime
+  
+    try {
+      const dailyStats = await this.getDailyStats(matchStage);
+      const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats, userId);
+  
+      // Get credit sales statistics
+      const creditStats = await this.model.aggregate([
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: 'credit'
           }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: '$date' },
-            month: { $month: '$date' },
-            day: { $dayOfMonth: '$date' }
-          },
-          dailyExpenses: { $sum: '$amount' }
-        }
-      },
-      {
-        $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 }
-      }
-    ]);
-
-    const enrichedStats = stats.map(stat => {
-      const matchingExpense = expenses.find(exp => 
-        exp._id.year === stat._id.year && 
-        exp._id.month === stat._id.month && 
-        exp._id.day === stat._id.day
-      );
-
-      const dailyExpenses = matchingExpense ? matchingExpense.dailyExpenses : 0;
-
-      return {
-        ...stat,
-        expenses: dailyExpenses,
-        netProfit: stat.totalMarginProfit - dailyExpenses
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" },
+              month: { $month: "$date" },
+              day: { $dayOfMonth: "$date" }
+            },
+            totalCreditAmount: { $sum: "$totalAmount" },
+            totalCreditCount: { $sum: 1 },
+            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
+            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+          }
+        },
+        { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
+      ]);
+  
+      // Get total quantity sold
+      const quantityStats = await this.model.aggregate([
+        matchStage,
+        { $unwind: "$products" },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" },
+              month: { $month: "$date" },
+              day: { $dayOfMonth: "$date" }
+            },
+            totalQuantity: { $sum: "$products.quantity" }
+          }
+        },
+        { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
+      ]);
+  
+      // Combine all stats
+      const finalStats = dailyStatsWithExpenses.map(stat => {
+        const matchingCredit = creditStats.find(cs => 
+          cs._id.year === stat._id.year && 
+          cs._id.month === stat._id.month && 
+          cs._id.day === stat._id.day
+        );
+  
+        const matchingQuantity = quantityStats.find(qs => 
+          qs._id.year === stat._id.year && 
+          qs._id.month === stat._id.month && 
+          qs._id.day === stat._id.day
+        );
+  
+        return {
+          ...stat,
+          // Required metrics
+          totalSales: stat.dailyTotal || 0,
+          totalMargin: stat.dailyProfit || 0,
+          totalExpenses: stat.expenses || 0,
+          totalCredit: matchingCredit?.totalCreditAmount || 0,
+          remainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          totalQuantity: matchingQuantity?.totalQuantity || 0,
+          // Original credit stats
+          totalCreditAmount: matchingCredit?.totalCreditAmount || 0,
+          totalCreditCount: matchingCredit?.totalCreditCount || 0,
+          totalPaidCreditAmount: matchingCredit?.totalPaidAmount || 0,
+          totalRemainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          // Net profit (sales margin minus expenses)
+          netProfit: (stat.dailyProfit || 0) - (stat.expenses || 0)
+        };
+      });
+  
+      // Calculate overall totals
+      const overallTotals = {
+        totalSales: finalStats.reduce((sum, stat) => sum + (stat.totalSales || 0), 0),
+        totalMargin: finalStats.reduce((sum, stat) => sum + (stat.totalMargin || 0), 0),
+        totalExpenses: finalStats.reduce((sum, stat) => sum + (stat.totalExpenses || 0), 0),
+        totalCredit: finalStats.reduce((sum, stat) => sum + (stat.totalCredit || 0), 0),
+        remainingCredit: finalStats.reduce((sum, stat) => sum + (stat.remainingCredit || 0), 0),
+        totalQuantity: finalStats.reduce((sum, stat) => sum + (stat.totalQuantity || 0), 0),
+        netProfit: finalStats.reduce((sum, stat) => sum + (stat.netProfit || 0), 0)
       };
-    });
-
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Daily sales retrieved successfully!',
-      data: enrichedStats
-    };
+  
+      return {
+        statusCode: 200,
+        success: true,
+        message: 'Daily sales retrieved successfully!',
+        data: finalStats,
+        summary: overallTotals
+      };
+    } catch (error) {
+      console.error('Error fetching daily sales:', error);
+      throw new Error('Failed to fetch daily sales.');
+    }
   }
+  
+
   async readAllMonthly(query: { year?: string; userId: string }) {
-    const { year } = query;
+    const { year, userId } = query;
     const currentYear = year || new Date().getFullYear().toString();
     const startDate = new Date(`${currentYear}-01-01`);
     const endDate = new Date(`${currentYear}-12-31T23:59:59.999Z`);
   
     const matchStage = {
       $match: {
-        // user: new Types.ObjectId(userId),
-        createdAt: {
+        user: new Types.ObjectId(userId),
+        date: {
           $gte: startDate,
           $lte: endDate
-        }
+        },
+        status: { $in: ['approved', 'pending', undefined, null] }
       }
     };
   
-    // Update to match daily stats structure with products unwind
-    const stats = await this.model.aggregate([
-      matchStage,
-      {
-        $unwind: "$products"  // Unwind the products array
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: "$createdAt" },
-            month: { $month: "$createdAt" }
-          },
-          totalQuantitySold: { $sum: "$products.quantity" },
-          totalSaleAmount: { $sum: "$totalAmount" },
-          totalSellingPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] } 
-          },
-          totalProductPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.productPrice"] } 
-          },
-          totalMarginProfit: {
-            $sum: { 
-              $multiply: [
-                "$products.quantity", 
-                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
-              ] 
-            }
-          },
-          averageSaleAmount: { $avg: "$totalAmount" },
-          totalCount: { $sum: 1 },
-          cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
-          momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
-          chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
-          transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
-        }
-      },
-      { $sort: { "_id.year": -1, "_id.month": -1 } }
-    ]);
+    try {
+      const monthlyStats = await this.getMonthlyStats(matchStage);
+      const monthlyStatsWithExpenses = await this.addExpensesToMonthlyStats(monthlyStats, userId);
   
-    // Get monthly expenses
-    const expenses = await Expense.aggregate([
-      {
-        $match: {
-          // createdBy: new Types.ObjectId(userId),
-          status: 'ACTIVE',
-          date: {
-            $gte: startDate,
-            $lte: endDate
+      // Get credit sales statistics
+      const creditStats = await this.model.aggregate([
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: 'credit'
           }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: '$date' },
-            month: { $month: '$date' }
-          },
-          monthlyExpenses: { $sum: '$amount' }
-        }
-      },
-      {
-        $sort: { '_id.year': -1, '_id.month': -1 }
-      }
-    ]);
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" },
+              month: { $month: "$date" }
+            },
+            totalCreditAmount: { $sum: "$totalAmount" },
+            totalCreditCount: { $sum: 1 },
+            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
+            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+          }
+        },
+        { $sort: { "_id.year": -1, "_id.month": -1 } }
+      ]);
   
-    const enrichedStats = stats.map(stat => {
-      const matchingExpense = expenses.find(exp => 
-        exp._id.year === stat._id.year && 
-        exp._id.month === stat._id.month
-      );
+      // Get total quantity sold
+      const quantityStats = await this.model.aggregate([
+        matchStage,
+        { $unwind: "$products" },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" },
+              month: { $month: "$date" }
+            },
+            totalQuantity: { $sum: "$products.quantity" }
+          }
+        },
+        { $sort: { "_id.year": -1, "_id.month": -1 } }
+      ]);
   
-      const monthlyExpenses = matchingExpense ? matchingExpense.monthlyExpenses : 0;
+      // Combine all stats
+      const finalStats = monthlyStatsWithExpenses.map(stat => {
+        const matchingCredit = creditStats.find(cs => 
+          cs._id.year === stat._id.year && 
+          cs._id.month === stat._id.month
+        );
+  
+        const matchingQuantity = quantityStats.find(qs => 
+          qs._id.year === stat._id.year && 
+          qs._id.month === stat._id.month
+        );
+  
+        return {
+          ...stat,
+          // Required metrics
+          totalSales: stat.monthlyTotal || 0,
+          totalMargin: stat.monthlyProfit || 0,
+          totalExpenses: stat.expenses || 0,
+          totalCredit: matchingCredit?.totalCreditAmount || 0,
+          remainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          totalQuantity: matchingQuantity?.totalQuantity || 0,
+          // Original credit stats  
+          totalCreditAmount: matchingCredit?.totalCreditAmount || 0,
+          totalCreditCount: matchingCredit?.totalCreditCount || 0,
+          totalPaidCreditAmount: matchingCredit?.totalPaidAmount || 0,
+          totalRemainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          // Net profit (sales margin minus expenses)
+          netProfit: (stat.monthlyProfit || 0) - (stat.expenses || 0)
+        };
+      });
+  
+      // Calculate overall totals
+      const overallTotals = {
+        totalSales: finalStats.reduce((sum, stat) => sum + (stat.totalSales || 0), 0),
+        totalMargin: finalStats.reduce((sum, stat) => sum + (stat.totalMargin || 0), 0),
+        totalExpenses: finalStats.reduce((sum, stat) => sum + (stat.totalExpenses || 0), 0),
+        totalCredit: finalStats.reduce((sum, stat) => sum + (stat.totalCredit || 0), 0),
+        remainingCredit: finalStats.reduce((sum, stat) => sum + (stat.remainingCredit || 0), 0),
+        totalQuantity: finalStats.reduce((sum, stat) => sum + (stat.totalQuantity || 0), 0),
+        netProfit: finalStats.reduce((sum, stat) => sum + (stat.netProfit || 0), 0)
+      };
   
       return {
-        ...stat,
-        expenses: monthlyExpenses,
-        netProfit: stat.totalMarginProfit - monthlyExpenses
+        statusCode: 200,
+        success: true,
+        message: 'Monthly sales retrieved successfully!',
+        data: finalStats,
+        summary: overallTotals
       };
-    });
-  
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Monthly sales retrieved successfully!',
-      data: enrichedStats
-    };
+    } catch (error) {
+      console.error('Error fetching monthly sales:', error);
+      throw new Error('Failed to fetch monthly sales.');
+    }
   }
+  
+  
 
   async updateStatus(id: string, status: 'pending' | 'approved' | 'rejected' | 'credit') {
-  try {
-    const saleTransaction = await this.model.findById(id);
-    
-    if (!saleTransaction) {
-      throw new CustomError(404, 'Sale transaction not found');
+    try {
+      // Get the sale before update
+      const oldSale = await this.model.findById(id);
+      if (!oldSale) {
+        throw new CustomError(404, 'Sale not found');
+      }
+      
+      // Check if we're changing to credit status
+      if (status === 'credit' && oldSale.status !== 'credit') {
+        // If changing to credit status without a debit record, create one
+        const existingDebit = await DebitModel.findOne({ saleId: id });
+        
+        if (!existingDebit) {
+          // Use stored debit details if available
+          const debitDetails = oldSale.debitDetails || {};
+          
+          // Create a debit record with proper information
+          await DebitModel.create({
+            productName: oldSale.products.map(p => p.productName).join(', '),
+            totalAmount: oldSale.totalAmount,
+            paidAmount: oldSale.paidAmount || 0,
+            remainingAmount: oldSale.totalAmount - (oldSale.paidAmount || 0),
+            dueDate: debitDetails.dueDate ? new Date(debitDetails.dueDate) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            buyerName: oldSale.buyerName,
+            buyerPhoneNumber: debitDetails.buyerPhoneNumber || 'Unknown',
+            buyerEmail: debitDetails.buyerEmail || 'Unknown',
+            saleId: id,
+            status: 'PENDING',
+            description: debitDetails.description || 'Credit sale approved by accountant'
+          });
+        }
+      }
+      
+      // Rest of the function remains the same...
+      // If we're changing from credit status, check if we need to update the debit record
+      if (oldSale.status === 'credit' && status !== 'credit') {
+        const existingDebit = await DebitModel.findOne({ saleId: id });
+        
+        if (existingDebit) {
+          // If sale is being approved, mark debit as completed
+          if (status === 'approved') {
+            await DebitModel.findByIdAndUpdate(
+              existingDebit._id, 
+              { 
+                $set: { 
+                  status: 'COMPLETED',
+                  paidAmount: existingDebit.totalAmount,
+                  remainingAmount: 0
+                } 
+              }
+            );
+          } 
+          // If sale is being rejected, delete the debit record
+          else if (status === 'rejected') {
+            await DebitModel.findByIdAndDelete(existingDebit._id);
+          }
+        }
+      }
+      
+      // Update sale status
+      const updatedSale = await this.model.findByIdAndUpdate(
+        id,
+        { $set: { status } },
+        { new: true }
+      );
+      
+      if (!updatedSale) {
+        throw new CustomError(404, 'Sale not found');
+      }
+      
+      return updatedSale;
+    } catch (error: any) {
+      throw new CustomError(400, error.message || 'Failed to update sale status');
     }
-    
-    // Update the status
-    const updatedTransaction = await this.model.findByIdAndUpdate(
-      id,
-      { $set: { status } },
-      { new: true }
-    );
-    
-    return updatedTransaction;
-  } catch (error: any) {
-    throw new CustomError(400, error.message || 'Failed to update sale status');
   }
-}
-
 
 
  
@@ -1291,7 +1671,7 @@ const stats = await this.model.aggregate([
   }
 
   async readAllYearly(query: { startYear?: string; endYear?: string; userId: string }) {
-    const { startYear, endYear} = query;
+    const { startYear, endYear, userId } = query;
     const currentYear = new Date().getFullYear().toString();
     
     // Set default date range if not provided
@@ -1302,95 +1682,103 @@ const stats = await this.model.aggregate([
   
     const matchStage = {
       $match: {
-        // user: new Types.ObjectId(userId),
-        createdAt: {
+        user: new Types.ObjectId(userId),
+        date: {
           $gte: startDate,
           $lte: endDate
-        }
+        },
+        status: { $in: ['approved', 'pending', undefined, null] }
       }
     };
   
-    // Updated to match daily stats structure with products unwind
-    const stats = await this.model.aggregate([
-      matchStage,
-      {
-        $unwind: "$products"  // Unwind the products array
-      },
-      {
-        $group: {
-          _id: { 
-            year: { $year: "$createdAt" }
-          },
-          totalQuantitySold: { $sum: "$products.quantity" },
-          totalSaleAmount: { $sum: "$totalAmount" },
-          totalSellingPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.SellingPrice"] } 
-          },
-          totalProductPrice: { 
-            $sum: { $multiply: ["$products.quantity", "$products.productPrice"] } 
-          },
-          totalMarginProfit: {
-            $sum: { 
-              $multiply: [
-                "$products.quantity", 
-                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
-              ] 
-            }
-          },
-          averageSaleAmount: { $avg: "$totalAmount" },
-          totalCount: { $sum: 1 },
-          cashTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cash"] }, "$totalAmount", 0] } },
-          momoTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "momo"] }, "$totalAmount", 0] } },
-          chequeTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "cheque"] }, "$totalAmount", 0] } },
-          transferTotal: { $sum: { $cond: [{ $eq: ["$paymentMode", "transfer"] }, "$totalAmount", 0] } }
-        }
-      },
-      { $sort: { "_id.year": -1 } }
-    ]);
+    try {
+      const yearlyStats = await this.getYearlyStats(matchStage);
+      const yearlyStatsWithExpenses = await this.addExpensesToYearlyStats(yearlyStats, userId);
   
-    // Get yearly expenses
-    const expenses = await Expense.aggregate([
-      {
-        $match: {
-          // createdBy: new Types.ObjectId(userId),
-          status: 'ACTIVE',
-          date: {
-            $gte: startDate,
-            $lte: endDate
+      // Get credit sales statistics
+      const creditStats = await this.model.aggregate([
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: 'credit'
           }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: '$date' }
-          },
-          yearlyExpenses: { $sum: '$amount' }
-        }
-      },
-      {
-        $sort: { '_id.year': -1 }
-      }
-    ]);
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" }
+            },
+            totalCreditAmount: { $sum: "$totalAmount" },
+            totalCreditCount: { $sum: 1 },
+            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
+            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+          }
+        },
+        { $sort: { "_id.year": -1 } }
+      ]);
   
-    // Combine sales and expenses data
-    const enrichedStats = stats.map(stat => {
-      const matchingExpense = expenses.find(exp => exp._id.year === stat._id.year);
-      const yearlyExpenses = matchingExpense ? matchingExpense.yearlyExpenses : 0;
+      // Get total quantity sold
+      const quantityStats = await this.model.aggregate([
+        matchStage,
+        { $unwind: "$products" },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$date" }
+            },
+            totalQuantity: { $sum: "$products.quantity" }
+          }
+        },
+        { $sort: { "_id.year": -1 } }
+      ]);
+  
+      // Combine all stats
+      const finalStats = yearlyStatsWithExpenses.map(stat => {
+        const matchingCredit = creditStats.find(cs => cs._id.year === stat._id.year);
+        const matchingQuantity = quantityStats.find(qs => qs._id.year === stat._id.year);
+  
+        return {
+          ...stat,
+          // Required metrics
+          totalSales: stat.yearlyTotal || 0,
+          totalMargin: stat.yearlyProfit || 0,
+          totalExpenses: stat.expenses || 0,
+          totalCredit: matchingCredit?.totalCreditAmount || 0,
+          remainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          totalQuantity: matchingQuantity?.totalQuantity || 0,
+          // Original credit stats
+          totalCreditAmount: matchingCredit?.totalCreditAmount || 0,
+          totalCreditCount: matchingCredit?.totalCreditCount || 0,
+          totalPaidCreditAmount: matchingCredit?.totalPaidAmount || 0,
+          totalRemainingCredit: matchingCredit?.totalRemainingCredit || 0,
+          // Net profit (sales margin minus expenses)
+          netProfit: (stat.yearlyProfit || 0) - (stat.expenses || 0)
+        };
+      });
+  
+      // Calculate overall totals
+      const overallTotals = {
+        totalSales: finalStats.reduce((sum, stat) => sum + (stat.totalSales || 0), 0),
+        totalMargin: finalStats.reduce((sum, stat) => sum + (stat.totalMargin || 0), 0),
+        totalExpenses: finalStats.reduce((sum, stat) => sum + (stat.totalExpenses || 0), 0),
+        totalCredit: finalStats.reduce((sum, stat) => sum + (stat.totalCredit || 0), 0),
+        remainingCredit: finalStats.reduce((sum, stat) => sum + (stat.remainingCredit || 0), 0),
+        totalQuantity: finalStats.reduce((sum, stat) => sum + (stat.totalQuantity || 0), 0),
+        netProfit: finalStats.reduce((sum, stat) => sum + (stat.netProfit || 0), 0)
+      };
   
       return {
-        ...stat,
-        expenses: yearlyExpenses,
-        netProfit: stat.totalMarginProfit - yearlyExpenses
+        statusCode: 200,
+        success: true,
+        message: 'Yearly sales retrieved successfully!',
+        data: finalStats,
+        summary: overallTotals
       };
-    });
-  
-    return {
-      statusCode: 200,
-      success: true,
-      message: 'Yearly sales retrieved successfully!',
-      data: enrichedStats
-    };
+    } catch (error) {
+      console.error('Error fetching yearly sales:', error);
+      throw new Error('Failed to fetch yearly sales.');
+    }
   }
   
    

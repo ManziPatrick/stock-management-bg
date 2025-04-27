@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import DeliveryNote from './Delivery.models';
 import { IDeliveryNote, IDeliveryNoteCreate, IDeliveryNoteQuery, IDeliveryNoteUpdate } from './Delivery.interface';
 import CustomError from '../utils/customError';
-
+import { getNextDeliveryNoteId } from '../utils/generateDeliveryNoteId';
 class DeliveryNoteService {
   /**
    * Create a new delivery note
@@ -15,8 +15,9 @@ class DeliveryNoteService {
     try {
       // Generate unique ID for the delivery note if not provided
       if (!deliveryNoteData.id) {
-        deliveryNoteData.id = `DN-${uuidv4().substring(0, 8).toUpperCase()}`;
+        deliveryNoteData.id = await getNextDeliveryNoteId();
       }
+      
       
       const deliveryNote = await DeliveryNote.create(deliveryNoteData);
       return deliveryNote.toJSON();

@@ -13,12 +13,20 @@ export const getAllExpenses = async ({
     limit = 10,
     search = '',
     status = 'ACTIVE',
+    sortField = 'date',
+    sortOrder = 'desc',
+    category = null,
+    paymentMethod = null,
     createdBy = null
 }: {
     page: number;
     limit: number;
     search: string;
     status: string;
+    sortField?: string;
+    sortOrder?: string;
+    category?: string | null;
+    paymentMethod?: string | null;
     createdBy?: Types.ObjectId | null;
 }) => {
     const query: any = { status };
@@ -28,9 +36,23 @@ export const getAllExpenses = async ({
         query.createdBy = createdBy;
     }
 
+    // Apply category filter if provided
+    if (category) {
+        query.category = category;
+    }
+
+    // Apply payment method filter if provided
+    if (paymentMethod) {
+        query.paymentMethod = paymentMethod;
+    }
+
     if (search) {
         query['title'] = { $regex: search, $options: 'i' };
     }
+
+    // Create sort object
+    const sort: any = {};
+    sort[sortField] = sortOrder === 'asc' ? 1 : -1;
 
     try {
         // Get current date components
@@ -41,7 +63,7 @@ export const getAllExpenses = async ({
 
         // Fetch paginated expenses with user details
         const expenses = await Expense.find(query)
-            .sort({ date: -1 })
+            .sort(sort)
             .skip((page - 1) * limit)
             .limit(limit)
             .populate('createdBy', 'name email role')
@@ -62,7 +84,7 @@ export const getAllExpenses = async ({
                     maxAmount: { $max: '$amount' }
                 }
             }
-        ]);
+        ]) || [{ totalExpenses: 0, totalCount: 0, averageAmount: 0, minAmount: 0, maxAmount: 0 }];
 
         // Get payment method breakdown
         const paymentMethodStats = await Expense.aggregate([
@@ -140,15 +162,15 @@ export const createExpense = async (data: Partial<IExpense>): Promise<IExpense> 
 
         // If it's a petty cash expense, update the petty cash balance
         if (data.paymentMethod === 'PETTY_CASH') {
-            //@ts-ignore
-            await recordPettyCashExpense(expense._id,
+            await recordPettyCashExpense(
+                expense._id,
                 expense.amount,
                 expense.title,
                 expense.createdBy
             );
         }
 
-        return expense;
+        return await Expense.findById(expense._id).populate('createdBy', 'name email role');
     } catch (error) {
         if (error instanceof Error) {
             throw error; // Rethrow validation errors
@@ -164,13 +186,16 @@ export const createExpense = async (data: Partial<IExpense>): Promise<IExpense> 
  */
 export const deleteExpense = async (id: string): Promise<IExpense | null> => {
     try {
-        const expense = await Expense.findByIdAndDelete(id);
+        const expense = await Expense.findByIdAndDelete(id).populate('createdBy', 'name email role');
         if (!expense) {
-            throw new Error(`Expense with ID ${id} not found.`);
+            throw new ApiError(404, `Expense with ID ${id} not found.`);
         }
         return expense;
     } catch (error) {
         console.error('Error deleting expense:', error);
+        if (error instanceof ApiError) {
+            throw error;
+        }
         throw new Error('Failed to delete expense.');
     }
 };
