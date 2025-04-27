@@ -1,79 +1,60 @@
+"use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.deleteExpense = exports.createExpense = exports.getAllExpenses = void 0;
 //@ts-nocheck
-import { Expense, IExpense } from './expenseModel';
-import { checkPettyCashBalance, recordPettyCashExpense } from './pettyCashService';
-import { ApiError } from './error';
-import { Types } from 'mongoose';
-
+const expenseModel_1 = require("./expenseModel");
+const pettyCashService_1 = require("./pettyCashService");
+const error_1 = require("./error");
 /**
  * Fetch all expenses based on a query.
  * @param query - The query object for filtering expenses.
  * @returns A promise that resolves to an array of expenses.
  */
-export const getAllExpenses = async ({
-    page = 1,
-    limit = 10,
-    search = '',
-    status = 'ACTIVE',
-    sortField = 'date',
-    sortOrder = 'desc',
-    category = null,
-    paymentMethod = null,
-    createdBy = null
-}: {
-    page: number;
-    limit: number;
-    search: string;
-    status: string;
-    sortField?: string;
-    sortOrder?: string;
-    category?: string | null;
-    paymentMethod?: string | null;
-    createdBy?: Types.ObjectId | null;
-}) => {
-    const query: any = { status };
-
+const getAllExpenses = (_a) => __awaiter(void 0, [_a], void 0, function* ({ page = 1, limit = 10, search = '', status = 'ACTIVE', sortField = 'date', sortOrder = 'desc', category = null, paymentMethod = null, createdBy = null }) {
+    const query = { status };
     // If createdBy is provided, filter by creator
     if (createdBy) {
         query.createdBy = createdBy;
     }
-
     // Apply category filter if provided
     if (category) {
         query.category = category;
     }
-
     // Apply payment method filter if provided
     if (paymentMethod) {
         query.paymentMethod = paymentMethod;
     }
-
     if (search) {
         query['title'] = { $regex: search, $options: 'i' };
     }
-
     // Create sort object
-    const sort: any = {};
+    const sort = {};
     sort[sortField] = sortOrder === 'asc' ? 1 : -1;
-
     try {
         // Get current date components
         const now = new Date();
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth() + 1;
         const currentDay = now.getDate();
-
         // Fetch paginated expenses with user details
-        const expenses = await Expense.find(query)
+        const expenses = yield expenseModel_1.Expense.find(query)
             .sort(sort)
             .skip((page - 1) * limit)
             .limit(limit)
             .populate('createdBy', 'name email role')
             .exec();
-
-        const totalExpenses = await Expense.countDocuments(query);
-
+        const totalExpenses = yield expenseModel_1.Expense.countDocuments(query);
         // Get overall statistics
-        const [stats] = await Expense.aggregate([
+        const [stats] = (yield expenseModel_1.Expense.aggregate([
             { $match: query },
             {
                 $group: {
@@ -85,10 +66,9 @@ export const getAllExpenses = async ({
                     maxAmount: { $max: '$amount' }
                 }
             }
-        ]) || [{ totalExpenses: 0, totalCount: 0, averageAmount: 0, minAmount: 0, maxAmount: 0 }];
-
+        ])) || [{ totalExpenses: 0, totalCount: 0, averageAmount: 0, minAmount: 0, maxAmount: 0 }];
         // Get payment method breakdown
-        const paymentMethodStats = await Expense.aggregate([
+        const paymentMethodStats = yield expenseModel_1.Expense.aggregate([
             { $match: query },
             {
                 $group: {
@@ -98,9 +78,8 @@ export const getAllExpenses = async ({
                 }
             }
         ]);
-
         // Get category breakdown
-        const categoryStats = await Expense.aggregate([
+        const categoryStats = yield expenseModel_1.Expense.aggregate([
             { $match: query },
             {
                 $group: {
@@ -110,7 +89,6 @@ export const getAllExpenses = async ({
                 }
             }
         ]);
-
         return {
             statusCode: 200,
             success: true,
@@ -126,18 +104,19 @@ export const getAllExpenses = async ({
                 categoryStats
             }
         };
-    } catch (error) {
+    }
+    catch (error) {
         console.error('Error fetching expenses:', error);
         throw new Error('Failed to fetch expenses.');
     }
-};
-
+});
+exports.getAllExpenses = getAllExpenses;
 /**
  * Create a new expense document.
  * @param data - The data for the new expense.
  * @returns A promise that resolves to the created expense document.
  */
-export const createExpense = async (data: Partial<IExpense>): Promise<IExpense> => {
+const createExpense = (data) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         if (typeof data.date === 'string') {
             data.date = new Date(data.date);
@@ -145,58 +124,51 @@ export const createExpense = async (data: Partial<IExpense>): Promise<IExpense> 
                 throw new Error('Invalid date format.');
             }
         }
-
         if (!data.createdBy) {
             throw new Error('Missing createdBy field.');
         }
-
         // Check if petty cash has sufficient balance for the expense
         if (data.paymentMethod === 'PETTY_CASH') {
-            const hasSufficientBalance = await checkPettyCashBalance(data.amount as number);
+            const hasSufficientBalance = yield (0, pettyCashService_1.checkPettyCashBalance)(data.amount);
             if (!hasSufficientBalance) {
-                throw new ApiError(400, 'Insufficient petty cash balance');
+                throw new error_1.ApiError(400, 'Insufficient petty cash balance');
             }
         }
-
         // Create the expense
-        const expense = await Expense.create(data);
-
+        const expense = yield expenseModel_1.Expense.create(data);
         // If it's a petty cash expense, update the petty cash balance
         if (data.paymentMethod === 'PETTY_CASH') {
-            await recordPettyCashExpense(
-                expense._id,
-                expense.amount,
-                expense.title,
-                expense.createdBy
-            );
+            yield (0, pettyCashService_1.recordPettyCashExpense)(expense._id, expense.amount, expense.title, expense.createdBy);
         }
-
-        return await Expense.findById(expense._id).populate('createdBy', 'name email role');
-    } catch (error) {
+        return yield expenseModel_1.Expense.findById(expense._id).populate('createdBy', 'name email role');
+    }
+    catch (error) {
         if (error instanceof Error) {
             throw error; // Rethrow validation errors
         }
         throw new Error('Failed to create expense.');
     }
-};
-
+});
+exports.createExpense = createExpense;
 /**
  * Delete an expense by its ID.
  * @param id - The ID of the expense to delete.
  * @returns A promise that resolves to the deleted expense document or null if not found.
  */
-export const deleteExpense = async (id: string): Promise<IExpense | null> => {
+const deleteExpense = (id) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const expense = await Expense.findByIdAndDelete(id).populate('createdBy', 'name email role');
+        const expense = yield expenseModel_1.Expense.findByIdAndDelete(id).populate('createdBy', 'name email role');
         if (!expense) {
-            throw new ApiError(404, `Expense with ID ${id} not found.`);
+            throw new error_1.ApiError(404, `Expense with ID ${id} not found.`);
         }
         return expense;
-    } catch (error) {
+    }
+    catch (error) {
         console.error('Error deleting expense:', error);
-        if (error instanceof ApiError) {
+        if (error instanceof error_1.ApiError) {
             throw error;
         }
         throw new Error('Failed to delete expense.');
     }
-};
+});
+exports.deleteExpense = deleteExpense;

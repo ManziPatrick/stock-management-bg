@@ -1,4 +1,5 @@
 // src/services/debit.service.ts
+//@ts-nocheck
 import { DebitModel } from './debits.models';
 import { CreateDebitDto, UpdateDebitDto, DebitQueryParams, IDebit } from './debits.interface';
 import { AppError } from '../utils/appError';
