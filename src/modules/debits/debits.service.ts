@@ -587,7 +587,7 @@ export class DebitService {
     // Calculate new remaining amount if paid amount is updated
     let newRemainingAmount = oldDebit.remainingAmount;
     if (data.paidAmount !== undefined) {
-      // If only an additional payment is provided
+ 
       if (data.additionalPayment !== undefined && data.paidAmount === undefined) {
         data.paidAmount = oldDebit.paidAmount + data.additionalPayment;
         delete data.additionalPayment; // Remove it so it's not saved in the DB

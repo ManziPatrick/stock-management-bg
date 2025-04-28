@@ -3,6 +3,7 @@ import mongoose, { Types } from 'mongoose';
 import BaseServices from '../baseServices';
 import SaleTransaction from './sale.model';
 import Product from '../product/product.model';
+import { eachDayOfInterval, format } from 'date-fns';
 import CustomError from '../../errors/customError';
 import { IProductSale } from './sale.interface';
 import { DebitModel } from '../debits/debits.models';
@@ -664,12 +665,12 @@ private async getDailyStats(matchStage: any) {
           day: { $dayOfMonth: "$date" },
           paymentMode: "$paymentMode"
         },
-        // Sum totalAmount without unwinding products (one sum per transaction)
+     
         total: { $first: "$totalAmount" },  // Use first since totalAmount is same for the transaction
         count: { $sum: 1 }  // Count transactions
       }
     },
-    // Then group by date and payment mode
+   
     {
       $group: {
         _id: {
@@ -1325,8 +1326,22 @@ async getTotalCredit(userId: string) {
 
   async readAllDaily(query: { startDate?: string; endDate?: string; userId: string }) {
     const { startDate, endDate, userId } = query;
-    const startDateTime = startDate ? new Date(startDate) : new Date(new Date().setDate(new Date().getDate() - 30)); // Default to last 30 days
-    const endDateTime = endDate ? new Date(endDate) : new Date(new Date().setHours(23, 59, 59, 999));
+    const today = new Date();
+  
+    let startDateTime: Date;
+    let endDateTime: Date;
+  
+    if (startDate && endDate) {
+      // If startDate and endDate are provided, use them
+      startDateTime = new Date(startDate);
+      endDateTime = new Date(endDate);
+      // Force end of the endDate to 23:59:59.999
+      endDateTime.setUTCHours(23, 59, 59, 999);
+    } else {
+      // If no range, default to today only
+      startDateTime = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0));
+      endDateTime = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
+    }
   
     const matchStage = {
       $match: {
@@ -1334,16 +1349,113 @@ async getTotalCredit(userId: string) {
         date: {
           $gte: startDateTime,
           $lte: endDateTime
-        },
-        status: { $in: ['approved', 'pending', undefined, null] }
+        }
       }
     };
   
     try {
-      const dailyStats = await this.getDailyStats(matchStage);
+      // First, get all sales within the time range (approved or credit)
+      const sales = await this.model.find({
+        ...matchStage.$match,
+        status: { $in: ['approved', 'credit'] }
+      }).lean();
+  
+      // For credit sales, fetch the related debit records
+      const creditSaleIds = sales
+        .filter(sale => sale.status === 'credit')
+        .map(sale => sale._id.toString());
+        
+      let debitRecords = [];
+      
+      if (creditSaleIds.length > 0) {
+        debitRecords = await DebitModel.find({ saleId: { $in: creditSaleIds } }).lean();
+        
+        // Enhance credit sales with their debit information
+        sales.forEach(sale => {
+          if (sale.status === 'credit') {
+            const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
+            if (relatedDebit) {
+              sale.paidAmount = relatedDebit.paidAmount;
+              sale.remainingAmount = relatedDebit.remainingAmount;
+              sale.debitStatus = relatedDebit.status;
+            }
+          }
+        });
+      }
+  
+      // Process sales to calculate correct dailyStats
+      const dailyStatsMap = new Map();
+      
+      sales.forEach(sale => {
+        const saleDate = new Date(sale.date);
+        const dateKey = `${saleDate.getFullYear()}-${saleDate.getMonth() + 1}-${saleDate.getDate()}`;
+        
+        if (!dailyStatsMap.has(dateKey)) {
+          dailyStatsMap.set(dateKey, {
+            _id: {
+              year: saleDate.getFullYear(),
+              month: saleDate.getMonth() + 1,
+              day: saleDate.getDate()
+            },
+            dailyTotal: 0,
+            dailyProfit: 0,
+            ordersCount: 0
+          });
+        }
+        
+        const dailyEntry = dailyStatsMap.get(dateKey);
+        dailyEntry.ordersCount += 1;
+        
+        // Calculate amount to add based on status
+        const saleAmount = sale.status === 'credit' ? (sale.paidAmount || 0) : (sale.totalAmount || 0);
+        dailyEntry.dailyTotal += saleAmount;
+        
+        // Calculate margin correctly
+        if (Array.isArray(sale.products)) {
+          let saleMargin = 0;
+          
+          sale.products.forEach(product => {
+            const quantity = product.quantity || 0;
+            const sellingPrice = product.SellingPrice || 0;
+            const productPrice = product.productPrice || 0;
+            
+            const marginPerUnit = sellingPrice - productPrice;
+            const productMargin = marginPerUnit * quantity;
+            
+            saleMargin += productMargin;
+          });
+          
+          // For credit sales, adjust the margin based on paid proportion
+          if (sale.status === 'credit' && sale.totalAmount > 0) {
+            const paidProportion = (sale.paidAmount || 0) / sale.totalAmount;
+            saleMargin = saleMargin * paidProportion;
+          }
+          
+          dailyEntry.dailyProfit += saleMargin;
+        }
+      });
+      
+      // Convert map to array
+      let dailyStats = Array.from(dailyStatsMap.values());
+      
+      // If no data but looking at today, create default entry
+      if (dailyStats.length === 0) {
+        dailyStats = [{
+          _id: {
+            year: today.getUTCFullYear(),
+            month: today.getUTCMonth() + 1,
+            day: today.getUTCDate()
+          },
+          dailyTotal: 0,
+          dailyProfit: 0,
+          ordersCount: 0
+        }];
+      }
+  
+      // 2. Add expenses into daily stats
       const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats, userId);
   
-      // Get credit sales statistics
+      // 3. Get credit stats
       const creditStats = await this.model.aggregate([
         {
           ...matchStage,
@@ -1368,9 +1480,15 @@ async getTotalCredit(userId: string) {
         { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
       ]);
   
-      // Get total quantity sold
+      // 4. Get total quantity sold
       const quantityStats = await this.model.aggregate([
-        matchStage,
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: { $in: ['approved', 'credit'] }
+          }
+        },
         { $unwind: "$products" },
         {
           $group: {
@@ -1385,23 +1503,22 @@ async getTotalCredit(userId: string) {
         { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
       ]);
   
-      // Combine all stats
+      // 5. Combine all stats together
       const finalStats = dailyStatsWithExpenses.map(stat => {
-        const matchingCredit = creditStats.find(cs => 
-          cs._id.year === stat._id.year && 
-          cs._id.month === stat._id.month && 
+        const matchingCredit = creditStats.find(cs =>
+          cs._id.year === stat._id.year &&
+          cs._id.month === stat._id.month &&
           cs._id.day === stat._id.day
         );
   
-        const matchingQuantity = quantityStats.find(qs => 
-          qs._id.year === stat._id.year && 
-          qs._id.month === stat._id.month && 
+        const matchingQuantity = quantityStats.find(qs =>
+          qs._id.year === stat._id.year &&
+          qs._id.month === stat._id.month &&
           qs._id.day === stat._id.day
         );
   
         return {
           ...stat,
-          // Required metrics
           totalSales: stat.dailyTotal || 0,
           totalMargin: stat.dailyProfit || 0,
           totalExpenses: stat.expenses || 0,
@@ -1413,12 +1530,12 @@ async getTotalCredit(userId: string) {
           totalCreditCount: matchingCredit?.totalCreditCount || 0,
           totalPaidCreditAmount: matchingCredit?.totalPaidAmount || 0,
           totalRemainingCredit: matchingCredit?.totalRemainingCredit || 0,
-          // Net profit (sales margin minus expenses)
+          // Net profit (sales margin - expenses)
           netProfit: (stat.dailyProfit || 0) - (stat.expenses || 0)
         };
       });
   
-      // Calculate overall totals
+      // 6. Calculate overall totals
       const overallTotals = {
         totalSales: finalStats.reduce((sum, stat) => sum + (stat.totalSales || 0), 0),
         totalMargin: finalStats.reduce((sum, stat) => sum + (stat.totalMargin || 0), 0),
@@ -1442,6 +1559,8 @@ async getTotalCredit(userId: string) {
     }
   }
   
+  
+  
 
   async readAllMonthly(query: { year?: string; userId: string }) {
     const { year, userId } = query;
@@ -1455,13 +1574,20 @@ async getTotalCredit(userId: string) {
         date: {
           $gte: startDate,
           $lte: endDate
-        },
-        status: { $in: ['approved', 'pending', undefined, null] }
+        }
       }
     };
   
     try {
-      const monthlyStats = await this.getMonthlyStats(matchStage);
+      // Get monthly stats with proper status filtering
+      const monthlyStats = await this.getMonthlyStats({
+        ...matchStage,
+        $match: {
+          ...matchStage.$match,
+          status: { $in: ['approved', 'credit'] }
+        }
+      });
+      
       const monthlyStatsWithExpenses = await this.addExpensesToMonthlyStats(monthlyStats, userId);
   
       // Get credit sales statistics
@@ -1490,7 +1616,13 @@ async getTotalCredit(userId: string) {
   
       // Get total quantity sold
       const quantityStats = await this.model.aggregate([
-        matchStage,
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: { $in: ['approved', 'credit'] }
+          }
+        },
         { $unwind: "$products" },
         {
           $group: {
@@ -1686,13 +1818,20 @@ async getTotalCredit(userId: string) {
         date: {
           $gte: startDate,
           $lte: endDate
-        },
-        status: { $in: ['approved', 'pending', undefined, null] }
+        }
       }
     };
   
     try {
-      const yearlyStats = await this.getYearlyStats(matchStage);
+      // Get yearly stats with proper status filtering
+      const yearlyStats = await this.getYearlyStats({
+        ...matchStage,
+        $match: {
+          ...matchStage.$match,
+          status: { $in: ['approved', 'credit'] }
+        }
+      });
+      
       const yearlyStatsWithExpenses = await this.addExpensesToYearlyStats(yearlyStats, userId);
   
       // Get credit sales statistics
@@ -1720,7 +1859,13 @@ async getTotalCredit(userId: string) {
   
       // Get total quantity sold
       const quantityStats = await this.model.aggregate([
-        matchStage,
+        {
+          ...matchStage,
+          $match: {
+            ...matchStage.$match,
+            status: { $in: ['approved', 'credit'] }
+          }
+        },
         { $unwind: "$products" },
         {
           $group: {
