@@ -1,9 +1,12 @@
 import { Types } from 'mongoose';
 
+// This interface is meant to be flexible
 export interface IMeasurement {
-  type: 'weight' | 'length' | 'volume' | 'size' | 'pieces';
+  type?: string;
+  measurement?: string; // Alternative field name
   value?: number;
   unit: string;
+  [key: string]: any; // Allow any other properties
 }
 
 export interface IProduct {

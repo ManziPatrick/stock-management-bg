@@ -17,44 +17,61 @@ class ProductControllers {
   /**
    * create new product
    */
-  create = [
-    upload.array('images', 5),
-    uploadToCloudinary,
-    asyncHandler(async (req: Request, res: Response) => {
+
+create = [
+  upload.array('images', 5),
+  uploadToCloudinary,
+  asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const imageUrls = (req.body as any).cloudinaryUrls || [];
+      
+      // Parse measurement if it's a string
+      let measurement;
       try {
-        const imageUrls = (req.body as any).cloudinaryUrls || [];
-        
-        const measurement = typeof req.body.measurement === 'string' 
+        measurement = typeof req.body.measurement === 'string' 
           ? JSON.parse(req.body.measurement)
           : req.body.measurement;
-
-        const productData: Partial<IProduct> = {
-          name: req.body.name,
-          seller: new Types.ObjectId(req.body.seller),
-          category: new Types.ObjectId(req.body.category),
-          ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
-          price: Number(req.body.price),
-          stock: Number(req.body.quantity),
-          description: req.body.description,
-          unit: req.body.unit,
-          measurement: measurement,
-          images: imageUrls,
-          user: new Types.ObjectId(req.user._id),
-          createdBy: new Types.ObjectId(req.user._id) // Explicitly set the creator
-        };
-
-        const result = await this.services.create(productData, req.user._id);
-        sendResponse(res, result);
-      } catch (error: any) {
-        sendResponse(res, {
-          success: false,
-          statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
-          message: error.message || 'Failed to create product'
-        });
+          
+        // Fix the measurement structure if it has 'measurement' instead of 'type'
+        if (measurement && measurement.measurement && !measurement.type) {
+          measurement = {
+            type: measurement.measurement,
+            unit: measurement.unit,
+            value: measurement.value
+          };
+        }
+      } catch (error) {
+        throw new CustomError(400, 'Invalid measurement format');
       }
-    })
-  ];
 
+      const productData: Partial<IProduct> = {
+        name: req.body.name,
+        seller: new Types.ObjectId(req.body.seller),
+        category: new Types.ObjectId(req.body.category),
+        ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
+        price: Number(req.body.price),
+        stock: Number(req.body.quantity),
+        description: req.body.description,
+        unit: req.body.unit,
+        measurement: measurement,
+        images: imageUrls,
+        user: new Types.ObjectId(req.user._id),
+        createdBy: new Types.ObjectId(req.user._id)
+      };
+
+      console.log('Product data before sending to service:', productData);
+      const result = await this.services.create(productData, req.user._id);
+      sendResponse(res, result);
+    } catch (error: any) {
+      console.error('Error in product creation controller:', error);
+      sendResponse(res, {
+        success: false,
+        statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message || 'Failed to create product'
+      });
+    }
+  })
+];
   /**
    * Add product to stock
    */

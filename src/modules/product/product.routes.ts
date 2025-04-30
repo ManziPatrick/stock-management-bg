@@ -29,19 +29,19 @@ productRoute.get('/total', productControllers.getTotalProduct);
 productRoute.post('/bulk-delete', productControllers.bulkDelete);
 productRoute.post(
     '/',
-    authorizeRoles('KEEPER', 'ADMIN'), productControllers.create
+    authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT'), productControllers.create
   );
   
   productRoute.get(
     '/updated', 
     verifyAuth,
-    authorizeRoles('ADMIN', 'KEEPER'),
+    authorizeRoles('ADMIN', 'KEEPER','ACCOUNTANT'),
     productControllers.getCollectionDiscrepancies
   );
 // productRoute.get('/', productControllers.readAll);
-productRoute.patch('/:id/add',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(productValidator.addStockSchema), productControllers.addStock);
-productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(productValidator.updateSchema), productControllers.updateProduct);
+productRoute.patch('/:id/add',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT'), validateRequest(productValidator.addStockSchema), productControllers.addStock);
+productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT'), validateRequest(productValidator.updateSchema), productControllers.updateProduct);
 productRoute.get('/:id', productControllers.readSingle);
-productRoute.delete('/:id',authorizeRoles('ADMIN'), productControllers.delete);
+productRoute.delete('/:id',authorizeRoles('ADMIN','ACCOUNTANT'), productControllers.delete);
 
 export default productRoute;

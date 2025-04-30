@@ -15,9 +15,9 @@ saleRoutes.get('/weeks', saleControllers.readAllWeekly);
 saleRoutes.get('/credit', saleControllers.getTotalCredit);
 saleRoutes.post('/', saleControllers.create);
 saleRoutes.get('/', saleControllers.readAll);
-saleRoutes.patch('/:id', authorizeRoles('ADMIN'), validateRequest(saleValidator.updateSchema), saleControllers.update);
+saleRoutes.patch('/:id', authorizeRoles('ADMIN','ACCOUNTANT'), validateRequest(saleValidator.updateSchema), saleControllers.update);
 saleRoutes.patch('/:id/status', authorizeRoles('ACCOUNTANT'), saleControllers.updateStatus);
-saleRoutes.get('/:id', authorizeRoles('ADMIN'), saleControllers.readSingle);
-saleRoutes.delete('/:id', authorizeRoles('ADMIN'), saleControllers.delete);
+saleRoutes.get('/:id', authorizeRoles('ADMIN','ACCOUNTANT'), saleControllers.readSingle);
+saleRoutes.delete('/:id', authorizeRoles('ADMIN','ACCOUNTANT'), saleControllers.delete);
 
 export default saleRoutes;

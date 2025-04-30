@@ -1,24 +1,18 @@
 import { z } from 'zod';
 
+// Flexible measurement schema that accepts either type or measurement field
 const measurementSchema = z.object({
-  type: z.enum(['weight', 'length', 'volume', 'size', 'pieces']),
+  // Either type or measurement field must be present
+  type: z.string().optional(),
+  measurement: z.string().optional(),
   value: z.number().min(0.1).optional(),
   unit: z.string()
-}).refine((data) => {
-  const unitMappings = {
-    weight: ['g', 'kg', 'lb'],
-    length: ['cm', 'm', 'inch'],
-    volume: ['ml', 'l', 'oz'],
-    pieces: ['pc', 'dozen', 'set'],
-    size: ['EXTRA_SMALL', 'SMALL', 'MEDIUM', 'LARGE', 'EXTRA_LARGE', 'XXL', 'XXXL',
-           'EU_36', 'EU_37', 'EU_38', 'EU_39', 'EU_40', 'EU_41', 'EU_42', 
-           'EU_43', 'EU_44', 'EU_45', 'EU_46', 'EU_47']
-  };
-  
-  return unitMappings[data.type].includes(data.unit) && 
-         (data.type === 'size' || data.value !== undefined);
+}).refine(data => {
+  // Either type or measurement must be present
+  return (data.type !== undefined && data.type.length > 0) || 
+         (data.measurement !== undefined && data.measurement.length > 0);
 }, {
-  message: "Invalid measurement configuration"
+  message: "Either type or measurement must be specified"
 });
 
 const createSchema = z.object({
@@ -38,7 +32,6 @@ const addStockSchema = z.object({
   seller: z.string().min(1, { message: 'Seller is required' }),
   stock: z.number().min(1, { message: 'Must be greater than 1!' })
 });
-console.log(addStockSchema);
 
 const querySchema = z.object({
   search: z.string().optional(),

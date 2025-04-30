@@ -11,6 +11,7 @@ import { debitRoutes } from '../modules/debits/debits.routes';
 import Proforma from '../modules/Proforma/proforma.route';
 import {creditRoutes} from '../modules/credit/credit.routes'
 import deliveryNoteRoutes from '../modules/deliveryNote/Delivery.routes';
+import measurementRoutes from '../modules/measurement/measurement.routes';
 
 const rootRouter = Router();
 
@@ -24,6 +25,7 @@ rootRouter.use('/expenses',expenseRouter);
 rootRouter.use('/delivery-notes', deliveryNoteRoutes);
 rootRouter.use('/proforma',Proforma);
 rootRouter.use('/debits', debitRoutes);
+rootRouter.use('/measurements', measurementRoutes);
 rootRouter.use('/purchases', purchaseRoutes);
 rootRouter.use('/credits', creditRoutes);
 export default rootRouter;

@@ -114,6 +114,17 @@ class ProductServices extends BaseServices<any> {
       const recipients = await this.getAdminAndKeeperEmails();
       console.log('Recipients for product notification:', recipients);
       
+      // Format measurement info if available
+      let measurementInfo = '';
+      if (product.measurement) {
+        measurementInfo = `
+          <p><strong>Measurement Information:</strong></p>
+          <p>Type: ${product.measurement.type}</p>
+          <p>Unit: ${product.measurement.unit}</p>
+          ${product.measurement.value !== undefined ? `<p>Value: ${product.measurement.value}</p>` : ''}
+        `;
+      }
+      
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: recipients.join(', '),
@@ -126,6 +137,7 @@ class ProductServices extends BaseServices<any> {
           <p>Current Stock: ${product.stock}</p>
           <p>Price: ${product.price}</p>
           <p>Category: ${product.category}</p>
+          ${measurementInfo}
           <p>Time: ${new Date().toLocaleString()}</p>
         `
       };
@@ -157,6 +169,16 @@ class ProductServices extends BaseServices<any> {
   
       const stockStatus = product.stock === 0 ? 'Out of Stock' : 'Low Stock';
       
+      // Format measurement info if available
+      let measurementInfo = '';
+      if (product.measurement) {
+        measurementInfo = `
+          <p>Measurement Type: ${product.measurement.type}</p>
+          <p>Measurement Unit: ${product.measurement.unit}</p>
+          ${product.measurement.value !== undefined ? `<p>Measurement Value: ${product.measurement.value}</p>` : ''}
+        `;
+      }
+      
       const mailOptions = {
         from: process.env.EMAIL_USER,
         to: recipients.join(', '),
@@ -167,6 +189,7 @@ class ProductServices extends BaseServices<any> {
           <p>Current Stock: ${product.stock}</p>
           <p>Status: ${stockStatus}</p>
           <p>Seller: ${seller.name}</p>
+          ${measurementInfo}
           ${product.stock === 0 
             ? '<p style="color: red;"><strong>URGENT: Product is out of stock!</strong></p>'
             : '<p style="color: orange;"><strong>Warning: Stock level is low!</strong></p>'
@@ -209,30 +232,35 @@ class ProductServices extends BaseServices<any> {
     }
   }
   
-  private validateMeasurement(measurement: IMeasurement): boolean {
-    const unitMappings = {
-      weight: ['g', 'kg', 'lb'],
-      length: ['cm', 'm', 'inch'],
-      volume: ['ml', 'l', 'oz'],
-      pieces: ['pc', 'dozen', 'set'],
-      size: ['EXTRA_SMALL', 'SMALL', 'MEDIUM', 'LARGE', 'EXTRA_LARGE', 'XXL', 'XXXL',
-             'EU_36', 'EU_37', 'EU_38', 'EU_39', 'EU_40', 'EU_41', 'EU_42', 
-             'EU_43', 'EU_44', 'EU_45', 'EU_46', 'EU_47']
-    };
-
-    return (
-      measurement.type in unitMappings &&
-      unitMappings[measurement.type].includes(measurement.unit) &&
-      (measurement.type === 'size' || typeof measurement.value === 'number')
+  private validateMeasurement(measurement: any): boolean {
+    // If measurement doesn't exist, it's valid (since it's optional)
+    if (!measurement) return true;
+    
+    // First, fix the structure if needed
+    let measurementToValidate = measurement;
+    
+    // Handle case where the property is named 'measurement' instead of 'type'
+    if (measurement.measurement && !measurement.type) {
+      measurementToValidate = {
+        type: measurement.measurement,
+        unit: measurement.unit,
+        value: measurement.value
+      };
+    }
+    
+    // Basic validation to ensure required fields are present
+    const isValid = (
+      typeof measurementToValidate.type === 'string' && 
+      measurementToValidate.type.length > 0 &&
+      typeof measurementToValidate.unit === 'string' && 
+      measurementToValidate.unit.length > 0 &&
+      (measurementToValidate.value === undefined || typeof measurementToValidate.value === 'number')
     );
+    
+    console.log('Measurement validation result:', isValid, 'for:', measurementToValidate);
+    return isValid;
   }
 
-  /**
-   * Get all user IDs that should have access to a product:
-   * - The current user
-   * - Users created by the current user
-   * - The user who created the current user
-   */
   
   private async getAccessibleUserIds(currentUserId: string): Promise<Types.ObjectId[]> {
     if (!currentUserId || !Types.ObjectId.isValid(currentUserId)) {
@@ -284,6 +312,15 @@ class ProductServices extends BaseServices<any> {
     try {
       // Log incoming payload for debugging
       console.log('Creating product with payload:', payload);
+      
+      // Fix measurement structure if needed
+      if (payload.measurement && payload.measurement['measurement'] && !payload.measurement['type']) {
+        payload.measurement = {
+          type: payload.measurement['measurement'],
+          unit: payload.measurement['unit'],
+          value: payload.measurement['value']
+        };
+      }
   
       const productData = {
         ...payload,
@@ -304,6 +341,7 @@ class ProductServices extends BaseServices<any> {
   
       // Validate measurement if provided
       if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+        console.log('Measurement validation failed for:', payload.measurement);
         throw new CustomError(400, 'Invalid measurement data');
       }
   
@@ -341,106 +379,124 @@ class ProductServices extends BaseServices<any> {
       if (error.code === 11000) {
         throw new CustomError(400, 'Duplicate product entry');
       }
-      throw new CustomError(500, 'Failed to create product');
+      throw error instanceof CustomError ? error : new CustomError(500, 'Failed to create product');
     }
   }
   
  
-  // Product Service Update Method
-async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
-  try {
-    console.log("🚀 Updating product:", id);
-    console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
-    console.log("📦 Payload received:", payload);
-
-    if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
-      throw new CustomError(400, 'Invalid measurement data');
-    }
-
-    // Update the product without using transactions
-    const updatedProduct = await this.model.findByIdAndUpdate(
-      id,
-      {
-        ...payload,
-        ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
-        ...(payload.category && { category: new Types.ObjectId(payload.category) }),
-        ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
-      },
-      { new: true }
-    ).populate(['category', 'brand', 'seller']);
-
-    if (!updatedProduct) {
-      throw new CustomError(404, 'Product not found');
-    }
-
-    console.log("✅ Product updated successfully:", updatedProduct);
-
-    // --- Update Purchase Records if Flag is True ---
-    if (options?.updatePurchases) {
-      console.log("📢 Updating purchase records...");
-      const purchases = await Purchase.find({
-        product: id,
-        stockAddition: { $ne: true }
-      });
-
-      console.log("🛒 Purchases found:", purchases.length);
-
-      for (const purchase of purchases) {
-        const updates: any = {};
-
-        if (payload.price && payload.price !== purchase.unitPrice) {
-          updates.unitPrice = payload.price;
-          updates.totalPrice = payload.price * purchase.quantity;
-        }
-
-        if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
-          updates.measurement = payload.measurement;
-        }
-
-        if (Object.keys(updates).length > 0) {
-          console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
-          try {
-            await Purchase.findByIdAndUpdate(
-              purchase._id, 
-              updates, 
-              { session: undefined } // explicitly set session to undefined
-            );
-          } catch (purchaseError) {
-            console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
-            // Continue with other purchases even if one fails
-          }
-        } else {
-          console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
-        }
+  async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
+    try {
+      console.log("🚀 Updating product:", id);
+      console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
+      console.log("📦 Payload received:", payload);
+  
+      // Fix measurement structure if needed
+      if (payload.measurement && payload.measurement['measurement'] && !payload.measurement['type']) {
+        payload.measurement = {
+          type: payload.measurement['measurement'],
+          unit: payload.measurement['unit'],
+          value: payload.measurement['value']
+        };
       }
-    } else {
-      console.log("⚠️ Purchases not updated. Flag not set.");
+  
+      if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
+        console.log('Measurement validation failed for:', payload.measurement);
+        throw new CustomError(400, 'Invalid measurement data');
+      }
+  
+      // Update the product without using transactions
+      const updatedProduct = await this.model.findByIdAndUpdate(
+        id,
+        {
+          ...payload,
+          ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
+          ...(payload.category && { category: new Types.ObjectId(payload.category) }),
+          ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
+        },
+        { new: true }
+      ).populate(['category', 'brand', 'seller']);
+  
+      if (!updatedProduct) {
+        throw new CustomError(404, 'Product not found');
+      }
+  
+      console.log("✅ Product updated successfully:", updatedProduct);
+  
+      // --- Update Purchase Records if Flag is True ---
+      if (options?.updatePurchases) {
+        console.log("📢 Updating purchase records...");
+        const purchases = await Purchase.find({
+          product: id,
+          stockAddition: { $ne: true }
+        });
+  
+        console.log("🛒 Purchases found:", purchases.length);
+  
+        for (const purchase of purchases) {
+          const updates: any = {};
+  
+          if (payload.price && payload.price !== purchase.unitPrice) {
+            updates.unitPrice = payload.price;
+            updates.totalPrice = payload.price * purchase.quantity;
+          }
+  
+          if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
+            // Ensure measurement is in the correct format
+            const normalizedMeasurement = payload.measurement['measurement'] && !payload.measurement['type'] 
+              ? {
+                  type: payload.measurement['measurement'],
+                  unit: payload.measurement['unit'],
+                  value: payload.measurement['value']
+                }
+              : payload.measurement;
+              
+            updates.measurement = normalizedMeasurement;
+          }
+  
+          if (Object.keys(updates).length > 0) {
+            console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
+            try {
+              await Purchase.findByIdAndUpdate(
+                purchase._id, 
+                updates, 
+                { session: undefined } // explicitly set session to undefined
+              );
+            } catch (purchaseError) {
+              console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
+              // Continue with other purchases even if one fails
+            }
+          } else {
+            console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
+          }
+        }
+      } else {
+        console.log("⚠️ Purchases not updated. Flag not set.");
+      }
+  
+      await this.sendProductNotification(updatedProduct, 'Updated');
+      await this.checkAndNotifyStock(updatedProduct);
+  
+      return {
+        success: true,
+        statusCode: 200,
+        message: 'Product updated successfully',
+        data: updatedProduct
+      };
+  
+    } catch (error) {
+      console.error("❌ Error updating product:", error);
+      if (error instanceof CustomError) throw error;
+      
+      if (error.name === 'ValidationError') {
+        throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
+      }
+      if (error.code === 11000) {
+        throw new CustomError(400, 'Duplicate product entry');
+      }
+      
+      throw new CustomError(500, `Failed to update product: ${error.message}`);
     }
-
-    await this.sendProductNotification(updatedProduct, 'Updated');
-    await this.checkAndNotifyStock(updatedProduct);
-
-    return {
-      success: true,
-      statusCode: 200,
-      message: 'Product updated successfully',
-      data: updatedProduct
-    };
-
-  } catch (error) {
-    console.error("❌ Error updating product:", error);
-    if (error instanceof CustomError) throw error;
-    
-    if (error.name === 'ValidationError') {
-      throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
-    }
-    if (error.code === 11000) {
-      throw new CustomError(400, 'Duplicate product entry');
-    }
-    
-    throw new CustomError(500, `Failed to update product: ${error.message}`);
   }
-}
 
 async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
   try {

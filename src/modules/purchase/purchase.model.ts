@@ -1,25 +1,31 @@
-import { model, Schema } from 'mongoose';
+import { model, Schema, Types } from 'mongoose';
 
-const MeasurementSchema = new Schema({
-  type: { 
-    type: String, 
-    required: true 
+const MeasurementSchema = new Schema(
+  {
+    type: {
+      type: String,
+      required: [true, 'Measurement type is required'],
+      trim: true
+    },
+    unit: {
+      type: String,
+      required: [true, 'Measurement unit is required'],
+      trim: true
+    },
+    value: {
+      type: Number,
+      required: [true, 'Measurement value is required'],
+      min: [0, 'Measurement value must be positive']
+    }
   },
-  unit: { 
-    type: String, 
-    required: true 
-  },
-  value: { 
-    type: Number, 
-    required: true 
-  }
-}, { _id: false });
+  { _id: false }
+);
 
 const purchaseSchema = new Schema(
   {
-    user: { type: Schema.Types.ObjectId, required: true, ref: 'user', index: true },
-    seller: { type: Schema.Types.ObjectId, required: true, ref: 'seller', index: true },
-    product: { type: Schema.Types.ObjectId, required: true, ref: 'product', index: true },
+    user: { type: Types.ObjectId, required: true, ref: 'User', index: true },
+    seller: { type: Types.ObjectId, required: true, ref: 'Seller', index: true },
+    product: { type: Types.ObjectId, required: true, ref: 'Product', index: true },
     sellerName: { type: String, required: true, trim: true },
     productName: { type: String, required: true, trim: true },
     quantity: { type: Number, required: true, min: 1 },
@@ -34,11 +40,10 @@ const purchaseSchema = new Schema(
   { timestamps: true }
 );
 
-// Pre-save hook to automatically calculate total price
 purchaseSchema.pre('save', function (next) {
   this.totalPrice = this.quantity * this.unitPrice;
   next();
 });
 
-const Purchase = model('purchase', purchaseSchema);
+const Purchase = model('Purchase', purchaseSchema);
 export default Purchase;
