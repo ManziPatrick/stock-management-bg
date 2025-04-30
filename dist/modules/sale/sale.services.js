@@ -1616,7 +1616,7 @@ class SaleServices extends baseServices_1.default {
                 : new Date(`${currentYear}-12-31T23:59:59.999Z`);
             const matchStage = {
                 $match: {
-                    user: new mongoose_1.Types.ObjectId(userId),
+                    // user: new Types.ObjectId(userId),
                     date: {
                         $gte: startDate,
                         $lte: endDate
