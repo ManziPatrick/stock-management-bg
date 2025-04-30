@@ -1814,7 +1814,7 @@ async getTotalCredit(userId: string) {
   
     const matchStage = {
       $match: {
-        user: new Types.ObjectId(userId),
+        // user: new Types.ObjectId(userId),
         date: {
           $gte: startDate,
           $lte: endDate
