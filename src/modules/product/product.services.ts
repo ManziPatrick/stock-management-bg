@@ -58,7 +58,7 @@ class ProductServices extends BaseServices<any> {
    */
   private buildMatchStage(query: QueryOptions, userId?: string) {
     return {
-      ...(userId && { user: new Types.ObjectId(userId) }),
+      ...(userId && { user: new Types.ObjectId(userId)  }),
       ...(query.name && {
         $or: [
           { name: { $regex: query.name, $options: 'i' } },
@@ -102,7 +102,7 @@ class ProductServices extends BaseServices<any> {
 
   private async getAdminAndKeeperEmails(): Promise<string[]> {
     const users = await User.find({
-      role: { $in: ['ADMIN', 'KEEPER'] },
+      role: { $in: ['ADMIN','ACCOUNTANT', 'KEEPER'] },
       status: 'ACTIVE'
     });
     const emails = users.map(user => user.email);
@@ -683,7 +683,7 @@ async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases
       }
       
       // If user is ADMIN or SUPER_ADMIN, don't apply user-based filters
-      if (!['ADMIN', 'SUPER_ADMIN', 'KEEPER'].includes(userRole) && accessibleUserIds.length > 0) {
+      if (!['ADMIN', 'SUPER_ADMIN','ACCOUNTANT', 'KEEPER'].includes(userRole) && accessibleUserIds.length > 0) {
         matchStage = { 
           ...baseConditions, 
           $or: [
@@ -710,7 +710,7 @@ async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases
       const totalsPipeline = [
         { $match: matchStage },
         {
-          $group: {
+          $group: {  
             _id: null,
             totalProducts: { $sum: 1 },
             totalStock: { $sum: '$stock' },
@@ -783,7 +783,7 @@ async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases
       let matchStage = baseConditions;
       
       // If user is not an admin and is authenticated, apply user-based filters
-      if (!['ADMIN', 'SUPER_ADMIN', 'KEEPER'].includes(userRole) && accessibleUserIds.length > 0) {
+      if (!['ADMIN','ACCOUNTANT', 'SUPER_ADMIN', 'KEEPER'].includes(userRole) && accessibleUserIds.length > 0) {
         matchStage = { 
           ...baseConditions, 
           $or: [
