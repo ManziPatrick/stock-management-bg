@@ -405,7 +405,7 @@ class SaleServices extends BaseServices<any> {
           
           // For credit sales, adjust the margin based on paid proportion
           if (sale.status === 'credit' && sale.totalAmount > 0) {
-            const paidProportion = (sale.paidAmount || 0) / sale.totalAmount;
+            const paidProportion = 1;
             saleMargin = saleMargin * paidProportion;
           }
           
