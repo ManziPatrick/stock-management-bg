@@ -384,7 +384,194 @@ class ProductServices extends BaseServices<any> {
       throw error instanceof CustomError ? error : new CustomError(500, 'Failed to create product');
     }
   }
+
+ async bulkCreate(products: Partial<IProduct>[], userId: string): Promise<{
+  success: boolean;
+  totalProcessed: number;
+  successful: number;
+  failed: number;
+  results: Array<{
+    product: Partial<IProduct>;
+    success: boolean;
+    data?: any;
+    error?: string;
+  }>;
+}> {
+  console.log(`Starting enhanced bulk create for ${products.length} products`);
   
+  const results: Array<{
+    product: Partial<IProduct>;
+    success: boolean;
+    data?: any;
+    error?: string;
+  }> = [];
+
+  let successful = 0;
+  let failed = 0;
+
+  // Cache sellers to avoid repeated database calls
+  const sellerCache = new Map<string, any>();
+  const getSeller = async (sellerId: string) => {
+    if (!sellerCache.has(sellerId)) {
+      const seller = await Seller.findById(sellerId);
+      sellerCache.set(sellerId, seller);
+    }
+    return sellerCache.get(sellerId);
+  };
+
+  // Process each product individually with full create logic
+  for (let i = 0; i < products.length; i++) {
+    const product = products[i];
+    console.log(`Processing product ${i + 1}/${products.length}: ${product.name}`);
+    
+    try {
+      // Validate required fields
+      if (!product.name?.trim()) {
+        throw new CustomError(400, 'Product name is required');
+      }
+      if (!product.price || product.price <= 0) {
+        throw new CustomError(400, 'Valid price is required');
+      }
+      if (!product.stock || product.stock <= 0) {
+        throw new CustomError(400, 'Valid stock quantity is required');
+      }
+      if (!product.seller) {
+        throw new CustomError(400, 'Seller is required');
+      }
+      if (!product.category) {
+        throw new CustomError(400, 'Category is required');
+      }
+
+      // Fix measurement structure if needed
+      if (product.measurement && product.measurement['measurement'] && !product.measurement['type']) {
+        product.measurement = {
+          type: product.measurement['measurement'],
+          unit: product.measurement['unit'],
+          value: product.measurement['value']
+        };
+      }
+
+      // Prepare product data exactly like in individual create
+      const productData = {
+        ...product,
+        user: new Types.ObjectId(userId),
+        seller: new Types.ObjectId(product.seller),
+        category: new Types.ObjectId(product.category),
+        createdBy: new Types.ObjectId(userId),
+        ...(product.brand && { brand: new Types.ObjectId(product.brand) }),
+        stock: Number(product.stock),
+        price: Number(product.price),
+        images: product.images || [`https://via.placeholder.com/300x300/4f46e5/ffffff?text=${encodeURIComponent(product.name)}`]
+      };
+
+      console.log('Product data to create:', {
+        name: productData.name,
+        price: productData.price,
+        stock: productData.stock,
+        hasImages: productData.images?.length > 0
+      });
+
+      // Check seller existence (with caching)
+      const seller = await getSeller(product.seller.toString());
+      if (!seller) {
+        throw new CustomError(404, `Seller not found: ${product.seller}`);
+      }
+
+      // Validate measurement if provided
+      if (product.measurement && !this.validateMeasurement(product.measurement)) {
+        console.log('Measurement validation failed for:', product.measurement);
+        throw new CustomError(400, 'Invalid measurement data');
+      }
+
+      // Create product (same as individual create)
+      const createdProduct = await this.model.create(productData);
+      console.log(`✓ Product created: ${createdProduct.name} (ID: ${createdProduct._id})`);
+
+      // Create purchase record (same as individual create)
+      const purchaseData = {
+        user: userId,
+        seller: createdProduct.seller,
+        product: createdProduct._id,
+        sellerName: seller.name,
+        productName: createdProduct.name,
+        quantity: createdProduct.stock,
+        unitPrice: createdProduct.price,
+        totalPrice: createdProduct.stock * createdProduct.price,
+        measurement: createdProduct.measurement,
+      };
+
+      await Purchase.create(purchaseData);
+      console.log(`✓ Purchase record created for: ${createdProduct.name}`);
+
+      // Send notifications (same as individual create)
+      try {
+        await this.sendProductNotification(createdProduct, 'Created');
+        await this.checkAndNotifyStock(createdProduct);
+      } catch (notificationError) {
+        console.warn(`Notification failed for product ${createdProduct.name}:`, notificationError);
+        // Don't fail the entire operation for notification errors
+      }
+
+      // Add to successful results
+      results.push({
+        product,
+        success: true,
+        data: createdProduct
+      });
+      successful++;
+      
+      console.log(`✓ Product ${i + 1} completed successfully: ${product.name}`);
+
+    } catch (error: any) {
+      console.error(`✗ Product ${i + 1} failed: ${product.name}`, error.message);
+      
+      let errorMessage = error.message || 'Unknown error occurred';
+      
+      // Handle specific error types
+      if (error.name === 'ValidationError') {
+        errorMessage = Object.values(error.errors).map((err: any) => err.message).join(', ');
+      } else if (error.code === 11000) {
+        errorMessage = 'Duplicate product entry';
+      } else if (error.name === 'CastError') {
+        errorMessage = 'Invalid ID format provided';
+      }
+
+      results.push({
+        product,
+        success: false,
+        error: errorMessage
+      });
+      failed++;
+    }
+
+    // Optional: Add small delay between products to prevent overwhelming the system
+    if (i < products.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
+
+  console.log(`Enhanced bulk create completed: ${successful} successful, ${failed} failed`);
+
+  return {
+    success: true,
+    totalProcessed: products.length,
+    successful,
+    failed,
+    results
+  };
+}
+
+// Helper method to validate measurement (if not already present)
+private validateMeasurement(measurement: any): boolean {
+  if (!measurement) return true; // Measurement is optional
+  
+  return (
+    typeof measurement === 'object' &&
+    (measurement.type || measurement.measurement) &&
+    measurement.unit &&
+    (measurement.value !== undefined && measurement.value !== null)
+  );
+}
  
   async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
     try {

@@ -31,7 +31,7 @@ productRoute.post(
     '/',
     authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT'), productControllers.create
   );
-  
+ productRoute.post('/bulk', productControllers.bulkCreate);
   productRoute.get(
     '/updated', 
     verifyAuth,

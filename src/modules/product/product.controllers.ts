@@ -72,6 +72,233 @@ create = [
     }
   })
 ];
+
+// Debug version of bulk create controller with detailed logging
+bulkCreate = asyncHandler(async (req: Request, res: Response) => {
+  try {
+    // Comprehensive logging
+    console.log('=== BULK CREATE DEBUG ===');
+    console.log('Request method:', req.method);
+    console.log('Request URL:', req.url);
+    console.log('Content-Type:', req.headers['content-type']);
+    console.log('Raw body type:', typeof req.body);
+    console.log('Raw body keys:', Object.keys(req.body || {}));
+    console.log('Full request body:', JSON.stringify(req.body, null, 2));
+    
+    let products;
+    
+    // Handle different possible data structures
+    if (req.body.products) {
+      console.log('Found req.body.products');
+      console.log('products type:', typeof req.body.products);
+      console.log('products is array?', Array.isArray(req.body.products));
+      products = req.body.products;
+    } else if (Array.isArray(req.body)) {
+      console.log('req.body is directly an array');
+      products = req.body;
+    } else if (req.body && typeof req.body === 'object') {
+      console.log('req.body is an object, checking structure...');
+      
+      // Check if the object has numeric keys (might be array-like)
+      const keys = Object.keys(req.body);
+      const isArrayLike = keys.every(key => !isNaN(Number(key)));
+      
+      if (isArrayLike && keys.length > 0) {
+        console.log('Converting array-like object to array');
+        products = Object.values(req.body);
+      } else {
+        console.log('Single product object, converting to array');
+        products = [req.body];
+      }
+    } else {
+      console.log('Unrecognized data format');
+      throw new CustomError(400, 'Invalid data format received');
+    }
+    
+    console.log('Final products type:', typeof products);
+    console.log('Final products is array?', Array.isArray(products));
+    console.log('Final products length:', Array.isArray(products) ? products.length : 'N/A');
+    
+    if (Array.isArray(products) && products.length > 0) {
+      console.log('First product sample:', JSON.stringify(products[0], null, 2));
+    }
+    
+    // Validation
+    if (!Array.isArray(products)) {
+      const errorMsg = `Expected array but got ${typeof products}. Raw body: ${JSON.stringify(req.body)}`;
+      console.error('Type error:', errorMsg);
+      throw new CustomError(400, errorMsg);
+    }
+
+    if (products.length === 0) {
+      throw new CustomError(400, 'Products array cannot be empty');
+    }
+
+    console.log(`Processing ${products.length} products for bulk creation`);
+    
+    // Generate default image URL function with category-based styling
+    const generateDefaultImage = (productName: string, category: string = 'general') => {
+      const encodedName = encodeURIComponent(productName.substring(0, 20));
+      
+      // Category-specific styling
+      const categoryStyles: Record<string, { bg: string; color: string }> = {
+        'electronics': { bg: '1e40af', color: 'ffffff' },
+        'clothing': { bg: 'dc2626', color: 'ffffff' },
+        'food': { bg: '16a34a', color: 'ffffff' },
+        'books': { bg: '7c2d12', color: 'ffffff' },
+        'home': { bg: '4338ca', color: 'ffffff' },
+        'beauty': { bg: 'be185d', color: 'ffffff' },
+        'sports': { bg: 'ea580c', color: 'ffffff' },
+        'automotive': { bg: '374151', color: 'ffffff' },
+      };
+      
+      const style = categoryStyles[category.toLowerCase()] || { bg: '4f46e5', color: 'ffffff' };
+      
+      return `https://via.placeholder.com/300x300/${style.bg}/${style.color}?text=${encodedName}`;
+    };
+
+    // Process products and add default images where needed
+    const processedProducts = await Promise.all(
+      products.map(async (product: any, index: number) => {
+        try {
+          console.log(`Processing product ${index + 1}:`, {
+            name: product.name,
+            seller: product.seller,
+            category: product.category,
+            price: product.price,
+            stock: product.stock || product.quantity
+          });
+
+          // Parse measurement if it's a string
+          let measurement;
+          try {
+            measurement = typeof product.measurement === 'string' 
+              ? JSON.parse(product.measurement)
+              : product.measurement;
+              
+            // Fix the measurement structure if it has 'measurement' instead of 'type'
+            if (measurement && measurement.measurement && !measurement.type) {
+              measurement = {
+                type: measurement.measurement,
+                unit: measurement.unit,
+                value: measurement.value
+              };
+            }
+          } catch (error) {
+            console.warn(`Invalid measurement format for product ${index + 1}:`, product.measurement);
+            // Set a default measurement structure
+            measurement = {
+              type: product.measurement || 'Weight',
+              unit: product.unit || 'kg',
+              value: product.stock || product.quantity || 1
+            };
+          }
+
+          // Handle images - use provided image or generate default
+          let images: string[] = [];
+          if (product.image && product.image.trim()) {
+            // Validate URL format
+            try {
+              new URL(product.image);
+              images = [product.image];
+              console.log(`Using provided image for product ${index + 1}`);
+            } catch {
+              console.warn(`Invalid image URL for product ${index + 1}, using default`);
+              images = [generateDefaultImage(product.name, product.category)];
+            }
+          } else {
+            // Generate default image
+            images = [generateDefaultImage(product.name, product.category)];
+            console.log(`Generated default image for product ${index + 1}`);
+          }
+
+          const productData: Partial<IProduct> = {
+            name: product.name,
+            seller: new Types.ObjectId(product.seller),
+            category: new Types.ObjectId(product.category),
+            ...(product.brand && { brand: new Types.ObjectId(product.brand) }),
+            price: Number(product.price),
+            stock: Number(product.stock || product.quantity),
+            description: product.description || `High quality ${product.name}`,
+            unit: product.unit,
+            measurement: measurement,
+            images: images,
+            user: new Types.ObjectId(req.user._id),
+            createdBy: new Types.ObjectId(req.user._id),
+            isCredit: product.isCredit || false
+          };
+
+          console.log(`Product ${index + 1} processed successfully`);
+          return {
+            ...productData,
+            originalIndex: index,
+            originalName: product.name
+          };
+        } catch (error: any) {
+          console.error(`Error processing product ${index + 1}:`, error);
+          throw new CustomError(400, `Error processing product ${index + 1} (${product.name}): ${error.message}`);
+        }
+      })
+    );
+
+    console.log(`Successfully processed ${processedProducts.length} products for bulk creation`);
+    
+    // Call the enhanced bulk create service
+    const result = await this.services.bulkCreate(processedProducts, req.user._id);
+    
+    console.log('Service result:', {
+      successful: result.successful,
+      failed: result.failed,
+      totalProcessed: result.totalProcessed
+    });
+    
+    // Format the response to match the frontend expectations
+    const responseData = {
+      successful: result.results.filter(r => r.success).map((r, index) => ({
+        ...r.data,
+        originalIndex: r.product.originalIndex,
+        name: r.product.originalName
+      })),
+      failed: result.results.filter(r => !r.success).map((r, index) => ({
+        originalIndex: r.product.originalIndex,
+        name: r.product.originalName,
+        error: r.error
+      })),
+      totalProcessed: result.totalProcessed,
+      successfulCount: result.successful,
+      failedCount: result.failed
+    };
+
+    console.log('=== BULK CREATE SUCCESS ===');
+    sendResponse(res, {
+      success: true,
+      statusCode: 200,
+      message: `Bulk upload completed: ${result.successful} successful, ${result.failed} failed`,
+      data: responseData
+    });
+  } catch (error: any) {
+    console.error('=== BULK CREATE ERROR ===');
+    console.error('Error details:', {
+      name: error.name,
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack
+    });
+    
+    sendResponse(res, {
+      success: false,
+      statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+      message: error.message || 'Failed to bulk create products',
+      data: {
+        successful: [],
+        failed: [],
+        totalProcessed: 0,
+        successfulCount: 0,
+        failedCount: 0
+      }
+    });
+  }
+});
   /**
    * Add product to stock
    */
