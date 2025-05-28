@@ -8,9 +8,9 @@ const categoryRoutes = Router();
 
 categoryRoutes.use(verifyAuth);
 
-categoryRoutes.post('/',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT'), validateRequest(categoryValidator.createSchema), categoryController.create);
+categoryRoutes.post('/',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(categoryValidator.createSchema), categoryController.create);
 categoryRoutes.get('/', categoryController.getAll);
-categoryRoutes.delete('/:id',authorizeRoles('KEEPER', 'ADMIN'), categoryController.delete);
-categoryRoutes.patch('/:id',authorizeRoles('KEEPER', 'ADMIN'), validateRequest(categoryValidator.updateSchema), categoryController.create);
+categoryRoutes.delete('/:id',authorizeRoles('KEEPER', 'ADMIN','SUPER_ADMIN'), categoryController.delete);
+categoryRoutes.patch('/:id',authorizeRoles('KEEPER', 'ADMIN','SUPER_ADMIN'), validateRequest(categoryValidator.updateSchema), categoryController.create);
 
 export default categoryRoutes;

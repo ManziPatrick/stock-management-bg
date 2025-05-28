@@ -85,7 +85,7 @@ userRoutes.post(
 userRoutes.get(
   '/all',
   verifyAuth,
-  authorizeRoles('ADMIN'),
+  authorizeRoles('ADMIN','SUPER_ADMIN'),
   userControllers.getAllUsers
 );
 

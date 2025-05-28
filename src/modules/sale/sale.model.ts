@@ -6,7 +6,8 @@ const productSaleSchema = new Schema({
   productName: { type: String, required: true },
   productPrice: { type: Number, required: true },
   SellingPrice: { type: Number, required: true },
-  quantity: { type: Number, required: true }
+  quantity: { type: Number, required: true },
+  inventoryReserved: { type: Boolean, default: false }
 });
 
 const saleTransactionSchema = new Schema<ISaleTransaction>(
@@ -26,11 +27,25 @@ const saleTransactionSchema = new Schema<ISaleTransaction>(
     products: [productSaleSchema],
     transactionId: { type: Schema.Types.ObjectId, required: true, index: true },
     totalAmount: { type: Number, required: true },
-    paidAmount: { type: Number },
+    paidAmount: { type: Number, default: 0 },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected', 'credit'],
       default: 'pending'
+    },
+    inventoryStatus: {
+      type: String,
+      enum: ['reserved', 'deducted', 'released'],
+      default: 'reserved'
+    },
+    isProductsCollected: { type: Boolean, default: false },
+    intendedAsCreditSale: { type: Boolean, default: false },
+    debitDetails: {
+      paidAmount: { type: Number },
+      dueDate: { type: Date },
+      buyerPhoneNumber: { type: String },
+      buyerEmail: { type: String },
+      description: { type: String }
     }
   },
   { timestamps: true }

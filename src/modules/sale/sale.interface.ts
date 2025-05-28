@@ -1,4 +1,3 @@
-// sale.interface.ts - Updated
 import { Types } from 'mongoose';
 
 export interface IProductSale {
@@ -7,6 +6,8 @@ export interface IProductSale {
   productPrice: number;
   SellingPrice: number;
   quantity: number;
+  // Track inventory status
+  inventoryReserved: boolean; // Whether inventory was reserved on creation
 }
 
 export interface ISaleTransaction {
@@ -21,10 +22,23 @@ export interface ISaleTransaction {
   products: IProductSale[];
   transactionId: Types.ObjectId;
   totalAmount: number;
-  paidAmount?: number; // Added field for credit sales
+  paidAmount?: number;
   status: 'pending' | 'approved' | 'rejected' | 'credit';
+  // New fields for inventory tracking
+  inventoryStatus: 'reserved' | 'deducted' | 'released'; // Track inventory state
+  isProductsCollected: boolean; // Whether customer has taken the products
   createdAt: Date;
   updatedAt: Date;
+  
+  // Store original intent for credit sales
+  intendedAsCreditSale?: boolean;
+  debitDetails?: {
+    paidAmount?: number;
+    dueDate: Date;
+    buyerPhoneNumber: string;
+    buyerEmail?: string;
+    description?: string;
+  };
 }
 
 export interface CreateSalePayload {
@@ -36,7 +50,7 @@ export interface CreateSalePayload {
     momoNumber?: string;
   };
   products: Array<{
-    product: string; // Product ID
+    product: string;
     quantity: number;
     SellingPrice: number;
   }>;
