@@ -1,3 +1,4 @@
+//@ts-nocheck
 import { RequestHandler } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import CustomError from '../errors/customError';

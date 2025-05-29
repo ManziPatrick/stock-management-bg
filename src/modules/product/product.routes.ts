@@ -42,6 +42,6 @@ productRoute.post(
 productRoute.patch('/:id/add',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(productValidator.addStockSchema), productControllers.addStock);
 productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(productValidator.updateSchema), productControllers.updateProduct);
 productRoute.get('/:id', productControllers.readSingle);
-productRoute.delete('/:id',authorizeRoles('ADMIN','ACCOUNTANT','SUPER_ADMIN'), productControllers.delete);
+productRoute.delete('/:id',authorizeRoles('ADMIN','SUPER_ADMIN'), productControllers.delete);
 
 export default productRoute;

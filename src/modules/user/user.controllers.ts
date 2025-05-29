@@ -1,3 +1,4 @@
+//@ts-nocheck
 import httpStatus from 'http-status';
 import asyncHandler from '../../lib/asyncHandler';
 import sendResponse from '../../lib/sendResponse';

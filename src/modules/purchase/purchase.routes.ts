@@ -11,6 +11,6 @@ purchaseRoutes.use(verifyAuth);
 purchaseRoutes.post('/',authorizeRoles('KEEPER', 'ADMIN','SUPER_ADMIN'),  validateRequest(purchaseValidator.createSchema), purchaseController.create);
 purchaseRoutes.get('/',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), purchaseController.getAll);
 purchaseRoutes.delete('/:id',authorizeRoles('ADMIN','SUPER_ADMIN'), purchaseController.delete);
-purchaseRoutes.patch('/:id',authorizeRoles('ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(purchaseValidator.updateSchema), purchaseController.update);
+purchaseRoutes.patch('/:id',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(purchaseValidator.updateSchema), purchaseController.update);
 
 export default purchaseRoutes;
