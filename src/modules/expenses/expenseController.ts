@@ -35,19 +35,12 @@ export const getExpenses = async (
       throw new ApiError(400, 'Invalid limit value');
     }
 
-    // Check user role - if not ADMIN or ACCOUNTANT, only show their own expenses
-    let createdBy = null;
-    if (req.user?.role !== 'ADMIN' && req.user?.role !== 'ACCOUNTANT') {
-      createdBy = req.user?._id;
-    }
-
     // Call the service layer function to get expenses with pagination
     const expensesData = await getAllExpenses({
       page: pageNumber,
       limit: limitNumber,
       search: search as string,
       status: status as string,
-      createdBy,
       sortField: sortField as string,
       sortOrder: sortOrder as string,
       category: category as string,

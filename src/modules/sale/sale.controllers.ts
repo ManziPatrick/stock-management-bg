@@ -158,7 +158,7 @@ class SaleController {
     const result = await saleServices.readAllDaily({
       startDate: startDate as string,
       endDate: endDate as string,
-      userId: user._id
+      // userId: user._id
     });
     
     return sendResponse(res, result);
@@ -180,7 +180,7 @@ class SaleController {
     const { year } = req.query;
     const result = await saleServices.readAllMonthly({
       year: year as string,
-      userId: user._id
+      // userId: user._id
     });
     
     return sendResponse(res, result);
@@ -192,7 +192,7 @@ class SaleController {
     const result = await saleServices.readAllYearly({
       startYear: startYear as string,
       endYear: endYear as string,
-      userId: user._id
+      // userId: user._id
     });
     
     return sendResponse(res, result);

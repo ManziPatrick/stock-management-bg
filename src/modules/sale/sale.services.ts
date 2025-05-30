@@ -461,12 +461,12 @@ async readAll(query: Record<string, unknown> = {}) {
   };
   
   
-    if (userRole === 'ACCOUNTANT') {
+    if (userRole === 'ACCOUNTANT'||'KEEPER') {
     // Accountants see all sales except rejected
-    matchStage.$match.status = { $in: ['approved', 'credit', 'pending'] };
+    matchStage.$match.status = { $in: ['approved', 'credit', 'pending','rejected'] };
     } else {
     // Regular users see all their sales except rejected
-    matchStage.$match.status = { $in: ['approved', 'credit', 'pending'] };
+    matchStage.$match.status = { $in: ['approved', 'credit',] };
     // matchStage.$match.user = new Types.ObjectId(userId);
   }
 
@@ -1541,9 +1541,9 @@ async getTotalCredit(userId: string) {
     };
   }
 
-async readAllDaily(query: { startDate?: string; endDate?: string; userId: string }) {
+async readAllDaily(query: { startDate?: string; endDate?: string;  }) {
     console.log("readAllDaily called with query:", query);
-    const { startDate, endDate, userId } = query;
+    const { startDate, endDate} = query;
     const today = new Date();
   
     let startDateTime: Date;
@@ -1562,12 +1562,11 @@ async readAllDaily(query: { startDate?: string; endDate?: string; userId: string
   console.log("Using date range:", startDateTime, "to", endDateTime);
     const matchStage = {
       $match: {
-        user: new Types.ObjectId(userId),
         date: {
           $gte: startDateTime,
           $lte: endDateTime
         },
-        status: { $in: ['approved', 'credit'] } // Move status filter here
+        status: { $in: ['approved', 'credit'] }
       }
     };
   
@@ -1670,13 +1669,12 @@ async readAllDaily(query: { startDate?: string; endDate?: string; userId: string
       }
   
       // Add expenses into daily stats
-      const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats, userId);
+      const dailyStatsWithExpenses = await this.addExpensesToDailyStats(dailyStats);
   
       // Get credit stats using aggregation
       const creditStats = await this.model.aggregate([
         {
           $match: {
-            user: new Types.ObjectId(userId),
             date: {
               $gte: startDateTime,
               $lte: endDateTime
@@ -1704,7 +1702,6 @@ async readAllDaily(query: { startDate?: string; endDate?: string; userId: string
       const quantityStats = await this.model.aggregate([
         {
           $match: {
-            user: new Types.ObjectId(userId),
             date: {
               $gte: startDateTime,
               $lte: endDateTime
@@ -1786,15 +1783,14 @@ async readAllDaily(query: { startDate?: string; endDate?: string; userId: string
   
   
 
-async readAllMonthly(query: { year?: string; userId: string }) {
-  const { year, userId } = query;
+async readAllMonthly(query: { year?: string }) {
+  const { year } = query;
   const currentYear = year || new Date().getFullYear().toString();
   const startDate = new Date(`${currentYear}-01-01`);
   const endDate = new Date(`${currentYear}-12-31T23:59:59.999Z`);
 
   const matchStage = {
     $match: {
-      user: new Types.ObjectId(userId),
       date: {
         $gte: startDate,
         $lte: endDate
@@ -1812,7 +1808,7 @@ async readAllMonthly(query: { year?: string; userId: string }) {
       }
     });
     
-    const monthlyStatsWithExpenses = await this.addExpensesToMonthlyStats(monthlyStats, userId);
+    const monthlyStatsWithExpenses = await this.addExpensesToMonthlyStats(monthlyStats);
 
     // Get credit sales statistics
     const creditStats = await this.model.aggregate([
@@ -2146,147 +2142,121 @@ async updateStatus(id: string, status: 'pending' | 'approved' | 'rejected' | 'cr
     return result.length > 0 ? result[0].totalPurchasedAmount : 0;
   }
 
-async readAllYearly(query: { startYear?: string; endYear?: string; userId: string; userRole?: string }) {
-  const { startYear, endYear, userId, userRole } = query;
+ async readAllYearly(query: { startYear?: string; endYear?: string }) {
+  const { startYear, endYear } = query;
   const currentYear = new Date().getFullYear().toString();
   
+  // Set default date range if not provided
   const startDate = startYear ? new Date(`${startYear}-01-01`) : new Date(`${currentYear}-01-01`);
   const endDate = endYear 
     ? new Date(`${endYear}-12-31T23:59:59.999Z`) 
     : new Date(`${currentYear}-12-31T23:59:59.999Z`);
 
-  // FIXED: Consistent match criteria like readAll
-  let baseMatch: any = {
-    date: {
-      $gte: startDate,
-      $lte: endDate
-    },
-    status: { $in: ['approved', 'credit', 'pending'] }
+  const matchStage = {
+    $match: {
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }
   };
 
-  // FIXED: Apply user filtering consistently
-  if (userRole !== 'ACCOUNTANT') {
-    baseMatch.user = new Types.ObjectId(userId);
-  }
-
   try {
-    // Get all sales with consistent filtering
-    const sales = await this.model.find(baseMatch).lean();
-
-    if (sales.length === 0) {
-      return {
-        statusCode: 200,
-        success: true,
-        message: 'No sales data found for the specified year range.',
-        data: [],
-        summary: {
-          totalSales: 0,
-          totalMargin: 0,
-          totalExpenses: 0,
-          totalCredit: 0,
-          remainingCredit: 0,
-          totalQuantity: 0,
-          netProfit: 0
-        }
-      };
-    }
-
-    // Fetch debit records for credit sales
-    const creditSaleIds = sales
-      .filter(sale => sale.status === 'credit')
-      .map(sale => sale._id.toString());
-      
-    let debitRecords = [];
-    if (creditSaleIds.length > 0) {
-      debitRecords = await DebitModel.find({ saleId: { $in: creditSaleIds } }).lean();
-    }
-
-    // Process sales into yearly stats
-    const yearlyStatsMap = new Map();
-    
-    sales.forEach(sale => {
-      const saleDate = new Date(sale.date);
-      const yearKey = saleDate.getFullYear().toString();
-      
-      if (!yearlyStatsMap.has(yearKey)) {
-        yearlyStatsMap.set(yearKey, {
-          _id: {
-            year: saleDate.getFullYear()
-          },
-          yearlyTotal: 0,
-          yearlyProfit: 0,
-          transactionCount: 0,
-          totalCredit: 0,
-          remainingCredit: 0,
-          totalQuantity: 0,
-          expenses: 0
-        });
-      }
-      
-      const yearlyEntry = yearlyStatsMap.get(yearKey);
-      yearlyEntry.transactionCount += 1;
-      
-      // Calculate amount based on status (same logic as readAll)
-      let saleAmount = 0;
-      if (sale.status === 'credit') {
-        const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
-        saleAmount = relatedDebit?.paidAmount || 0;
-        yearlyEntry.totalCredit += sale.totalAmount || 0;
-        yearlyEntry.remainingCredit += (sale.totalAmount || 0) - saleAmount;
-      } else if (sale.status === 'approved') {
-        saleAmount = sale.totalAmount || 0;
-      } else if (sale.status === 'pending') {
-        saleAmount = sale.totalAmount || 0;
-      }
-      
-      yearlyEntry.yearlyTotal += saleAmount;
-      
-      // Calculate margin
-      if (Array.isArray(sale.products)) {
-        let saleMargin = 0;
-        let totalQuantity = 0;
-        
-        sale.products.forEach(product => {
-          const quantity = product.quantity || 0;
-          const sellingPrice = product.SellingPrice || 0;
-          const productPrice = product.productPrice || 0;
-          
-          totalQuantity += quantity;
-          const marginPerUnit = sellingPrice - productPrice;
-          saleMargin += marginPerUnit * quantity;
-        });
-        
-        yearlyEntry.yearlyProfit += saleMargin;
-        yearlyEntry.totalQuantity += totalQuantity;
+    // Get yearly stats with proper status filtering
+    const yearlyStats = await this.getYearlyStats({
+      ...matchStage,
+      $match: {
+        ...matchStage.$match,
+        status: { $in: ['approved', 'credit'] }
       }
     });
     
-    // Convert map to array and add expenses
-    let yearlyStats = Array.from(yearlyStatsMap.values());
-    
-    // Add expenses
-    for (let stat of yearlyStats) {
-      const yearExpenses = await this.calculateYearExpenses(userId, stat._id.year);
-      stat.expenses = yearExpenses;
-      stat.netProfit = stat.yearlyProfit - yearExpenses;
-    }
+    const yearlyStatsWithExpenses = await this.addExpensesToYearlyStats(yearlyStats);
+
+    // Get credit sales statistics
+    const creditStats = await this.model.aggregate([
+      {
+        ...matchStage,
+        $match: {
+          ...matchStage.$match,
+          status: 'credit'
+        }
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$date" }
+          },
+          totalCreditAmount: { $sum: "$totalAmount" },
+          totalCreditCount: { $sum: 1 },
+          totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
+          totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+        }
+      },
+      { $sort: { "_id.year": -1 } }
+    ]);
+
+    // Get total quantity sold
+    const quantityStats = await this.model.aggregate([
+      {
+        ...matchStage,
+        $match: {
+          ...matchStage.$match,
+          status: { $in: ['approved', 'credit'] }
+        }
+      },
+      { $unwind: "$products" },
+      {
+        $group: {
+          _id: {
+            year: { $year: "$date" }
+          },
+          totalQuantity: { $sum: "$products.quantity" }
+        }
+      },
+      { $sort: { "_id.year": -1 } }
+    ]);
+
+    // Combine all stats
+    const finalStats = yearlyStatsWithExpenses.map(stat => {
+      const matchingCredit = creditStats.find(cs => cs._id.year === stat._id.year);
+      const matchingQuantity = quantityStats.find(qs => qs._id.year === stat._id.year);
+
+      return {
+        ...stat,
+        // Required metrics
+        totalSales: stat.yearlyTotal || 0,
+        totalMargin: stat.yearlyProfit || 0,
+        totalExpenses: stat.expenses || 0,
+        totalCredit: matchingCredit?.totalCreditAmount || 0,
+        remainingCredit: matchingCredit?.totalRemainingCredit || 0,
+        totalQuantity: matchingQuantity?.totalQuantity || 0,
+        // Original credit stats
+        totalCreditAmount: matchingCredit?.totalCreditAmount || 0,
+        totalCreditCount: matchingCredit?.totalCreditCount || 0,
+        totalPaidCreditAmount: matchingCredit?.totalPaidAmount || 0,
+        totalRemainingCredit: matchingCredit?.totalRemainingCredit || 0,
+        // Net profit (sales margin minus expenses)
+        netProfit: (stat.yearlyProfit || 0) - (stat.expenses || 0)
+      };
+    });
 
     // Calculate overall totals
     const overallTotals = {
-      totalSales: yearlyStats.reduce((sum, stat) => sum + stat.yearlyTotal, 0),
-      totalMargin: yearlyStats.reduce((sum, stat) => sum + stat.yearlyProfit, 0),
-      totalExpenses: yearlyStats.reduce((sum, stat) => sum + stat.expenses, 0),
-      totalCredit: yearlyStats.reduce((sum, stat) => sum + stat.totalCredit, 0),
-      remainingCredit: yearlyStats.reduce((sum, stat) => sum + stat.remainingCredit, 0),
-      totalQuantity: yearlyStats.reduce((sum, stat) => sum + stat.totalQuantity, 0),
-      netProfit: yearlyStats.reduce((sum, stat) => sum + stat.netProfit, 0)
+      totalSales: finalStats.reduce((sum, stat) => sum + (stat.totalSales || 0), 0),
+      totalMargin: finalStats.reduce((sum, stat) => sum + (stat.totalMargin || 0), 0),
+      totalExpenses: finalStats.reduce((sum, stat) => sum + (stat.totalExpenses || 0), 0),
+      totalCredit: finalStats.reduce((sum, stat) => sum + (stat.totalCredit || 0), 0),
+      remainingCredit: finalStats.reduce((sum, stat) => sum + (stat.remainingCredit || 0), 0),
+      totalQuantity: finalStats.reduce((sum, stat) => sum + (stat.totalQuantity || 0), 0),
+      netProfit: finalStats.reduce((sum, stat) => sum + (stat.netProfit || 0), 0)
     };
 
     return {
       statusCode: 200,
       success: true,
       message: 'Yearly sales retrieved successfully!',
-      data: yearlyStats,
+      data: finalStats,
       summary: overallTotals
     };
   } catch (error) {
@@ -2294,6 +2264,7 @@ async readAllYearly(query: { startYear?: string; endYear?: string; userId: strin
     throw new Error('Failed to fetch yearly sales.');
   }
 }
+  
 
   
    
