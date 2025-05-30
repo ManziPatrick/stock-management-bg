@@ -75,6 +75,7 @@ export const getPettyCashStatus = async () => {
 /**
  * Top up the petty cash balance
  */
+
 export const topUpPettyCash = async (amount: number, description: string, userId: Types.ObjectId) => {
   try {
     if (amount <= 0) {

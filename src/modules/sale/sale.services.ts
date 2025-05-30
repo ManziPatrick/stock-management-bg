@@ -410,7 +410,8 @@ private async calculateStatisticsWithAggregation(userId: string) {
 
     const matchStage: any = {
       createdBy: new Types.ObjectId(userId),
-      status: 'ACTIVE'
+      status: 'ACTIVE',
+      paymentMethod: { $ne: 'PETTY_CASH' } // Exclude PETTY_CASH payments
     };
 
     if (dateRange) {
@@ -433,7 +434,7 @@ private async calculateStatisticsWithAggregation(userId: string) {
         }
       ]);
 
-      console.log('Expense aggregation result:', totalExpenses);
+      console.log('Expense aggregation result (excluding PETTY_CASH):', totalExpenses);
 
       // If expenses found, return the total, otherwise return 0
       return totalExpenses.length > 0 ? totalExpenses[0].total : 0;
@@ -607,7 +608,7 @@ async readAll(query: Record<string, unknown> = {}) {
     });
 
     // Get expenses for the entire period
-    const totalExpenses = await this.calculateExpenses(userId);
+    const totalExpenses = await this.calculateExpenses();
 
     // Prepare simplified stats with focus on totals
     const simplifiedStats = {
@@ -662,12 +663,12 @@ private async addExpensesToDailyStats(dailyStats: any[], userId: string) {
     day: stat._id.day
   }));
   
- 
   const dailyExpenses = await Expense.aggregate([
     {
       $match: {
         // createdBy: new Types.ObjectId(userId),
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        paymentMethod: { $ne: 'PETTY_CASH' } // Exclude PETTY_CASH payments
       }
     },
     {
@@ -699,7 +700,6 @@ private async addExpensesToDailyStats(dailyStats: any[], userId: string) {
     };
   });
 }
- 
 
 private async addExpensesToMonthlyStats(monthlyStats: any[], userId: string) {
   if (!monthlyStats || monthlyStats.length === 0) return [];
@@ -709,7 +709,8 @@ private async addExpensesToMonthlyStats(monthlyStats: any[], userId: string) {
     {
       $match: {
         // createdBy: new Types.ObjectId(userId),
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        paymentMethod: { $ne: 'PETTY_CASH' } // Exclude PETTY_CASH payments
       }
     },
     {
@@ -748,7 +749,8 @@ private async addExpensesToYearlyStats(yearlyStats: any[], userId: string) {
     {
       $match: {
         createdBy: new Types.ObjectId(userId),
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        paymentMethod: { $ne: 'PETTY_CASH' } 
       }
     },
     {
