@@ -11,9 +11,9 @@ import bcrypt from 'bcrypt';
 class UserServices {
   private model = User;
 
-  // Get self profile with createdBy populated
+  // Get self profile - simplified without createdBy population
   async getSelf(userId: string) {
-    return this.model.findById(userId).populate('createdBy', 'name email role');
+    return this.model.findById(userId);
   }
 
   // Delete user
@@ -55,26 +55,20 @@ class UserServices {
     return user;
   }
 
-  // Get all users for super admin with createdBy details
+  // Get all users - simplified without createdBy population
   async getAllUsers() {
-    return this.model.find().select('-password').populate('createdBy', 'name email role');
+    return this.model.find().select('-password');
   }
 
-  // Get all users created by a specific admin
-  async getAllUsersByAdmin(adminId: string) {
-    return this.model.find({ createdBy: adminId }).select('-password').populate('createdBy', 'name email role');
-  }
-
-  // Get users by business name
+  // Get users by business name - simplified without createdBy population
   async getUsersByBusinessName(businessName: string) {
     return this.model.find({ 'businessInfo.businessName': businessName })
-      .select('-password')
-      .populate('createdBy', 'name email role');
+      .select('-password');
   }
 
-  // Get a single user by ID with createdBy details
+  // Get a single user by ID - simplified without createdBy population
   async getUserById(userId: string) {
-    const user = await this.model.findById(userId).populate('createdBy', 'name email role');
+    const user = await this.model.findById(userId);
     
     if (!user) {
       throw new CustomError(httpStatus.NOT_FOUND, 'User not found');
@@ -94,9 +88,9 @@ class UserServices {
     return this.model.findByIdAndUpdate(userId, { role }, { new: true });
   }
 
-  // Login existing user with createdBy details
+  // Login existing user - simplified without createdBy details
   async login(payload: { email: string; password: string }) {
-    const user = await this.model.findOne({ email: payload.email }).select('+password').populate('createdBy', 'name email role');
+    const user = await this.model.findOne({ email: payload.email }).select('+password');
     
     if (!user) {
       throw new CustomError(httpStatus.BAD_REQUEST, 'Wrong Credentials');
@@ -104,27 +98,24 @@ class UserServices {
 
     await verifyPassword(payload.password, user.password);
 
-    // Generate token including createdBy details
+    // Generate token - simplified without createdBy details
     const token = generateToken({
       _id: user._id,
       email: user.email,
       role: user.role,
       businessInfo: user.businessInfo,
-
-      createdBy: user.createdBy ? { _id: user.createdBy._id, name: user.createdBy.name, email: user.createdBy.email, role: user.createdBy.role } : null,
     });
 
     return {
       token,
       role: user.role,
       businessInfo: user.businessInfo,
-      createdBy: user.createdBy,
     };
   }
 
-  // Update user profile
+  // Update user profile - simplified without createdBy population
   async updateProfile(id: string, payload: Partial<IUser>) {
-    return this.model.findByIdAndUpdate(id, payload, { new: true }).populate('createdBy', 'name email role');
+    return this.model.findByIdAndUpdate(id, payload, { new: true });
   }
 
   // Change password
@@ -145,7 +136,7 @@ class UserServices {
     return updatedUser;
   }
 
-  // New method: Admin update user's information
+  // Admin update user's information - simplified without createdBy population
   async adminUpdateUser(userId: string, payload: Partial<IUser>) {
     const user = await this.model.findById(userId);
     
@@ -153,11 +144,10 @@ class UserServices {
       throw new CustomError(httpStatus.NOT_FOUND, 'User not found');
     }
     
-    return this.model.findByIdAndUpdate(userId, payload, { new: true })
-      .populate('createdBy', 'name email role');
+    return this.model.findByIdAndUpdate(userId, payload, { new: true });
   }
 
-  // New method: Admin update user's password
+  // Admin update user's password
   async adminUpdatePassword(userId: string, newPassword: string) {
     const user = await this.model.findById(userId);
     console.log(userId, newPassword);

@@ -122,23 +122,37 @@ class UserControllers {
     throw new CustomError(httpStatus.FORBIDDEN, 'Only admins and super admins can create users');
   });
 
-  // Get all users created by the admin
+  // Get all users - admins see users in their business, super admins see all
   getAllUsers = asyncHandler(async (req, res) => {
-    if (req.user.role !== 'ADMIN') {
-      throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can view all users');
+    if (req.user.role === 'SUPER_ADMIN') {
+      const result = await this.services.getAllUsers();
+      
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'Users retrieved successfully!',
+        data: result,
+      });
+      return;
     }
 
-    const result = await this.services.getAllUsersByAdmin(req.user._id); // Filter by admin ID
+    if (req.user.role === 'ADMIN') {
+      // Admins can see users in their business
+      const result = await this.services.getUsersByBusinessName(req.user.businessInfo?.businessName);
+      
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'Users retrieved successfully!',
+        data: result,
+      });
+      return;
+    }
 
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.OK,
-      message: 'Users retrieved successfully!',
-      data: result,
-    });
+    throw new CustomError(httpStatus.FORBIDDEN, 'Only admins and super admins can view users');
   });
 
-  // Update user role (admin only for their users)
+  // Update user role
   updateUserRole = asyncHandler(async (req, res) => {
     if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
       throw new CustomError(httpStatus.FORBIDDEN, 'Only admins can update user roles');
@@ -164,11 +178,13 @@ class UserControllers {
       return;
     }
 
-    // Regular admin can only update their created users
+    // Regular admin can update users in their business
     const user = await this.services.getUserById(req.params.userId);
-    // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-    //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users you created');
-    // }
+    
+    // Check if user is in the same business as the admin
+    if (user.businessInfo?.businessName !== req.user.businessInfo?.businessName) {
+      throw new CustomError(httpStatus.FORBIDDEN, 'You can only update roles for users in your business');
+    }
     
     // Regular admin can't set someone to SUPER_ADMIN
     if (req.body.role === 'SUPER_ADMIN') {
@@ -195,13 +211,14 @@ class UserControllers {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot delete super admin accounts');
       }
     } 
-    // Regular admin can only delete their created users
+    // Regular admin can delete users in their business
     else if (req.user.role === 'ADMIN') {
       const user = await this.services.getUserById(req.params.id);
       
-      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users you created');
-      // }
+      // Check if user is in the same business as the admin
+      if (user.businessInfo?.businessName !== req.user.businessInfo?.businessName) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'You can only delete users in your business');
+      }
       
       if (user.role === 'SUPER_ADMIN') {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot delete super admin accounts');
@@ -257,7 +274,7 @@ class UserControllers {
     });
   });
 
-  // NEW: Admin updates user information
+  // Admin updates user information
   adminUpdateUser = asyncHandler(async (req, res) => {
     const { userId } = req.params;
 
@@ -274,13 +291,14 @@ class UserControllers {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot edit other super admin accounts');
       }
     } 
-    // Admin can only edit users they created
+    // Admin can edit users in their business
     else if (req.user.role === 'ADMIN') {
       const user = await this.services.getUserById(userId);
       
-      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only edit users you created');
-      // }
+      // Check if user is in the same business as the admin
+      if (user.businessInfo?.businessName !== req.user.businessInfo?.businessName) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'You can only edit users in your business');
+      }
       
       if (user.role === 'SUPER_ADMIN') {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot edit super admin accounts');
@@ -297,7 +315,7 @@ class UserControllers {
     });
   });
 
-  // NEW: Admin updates user's password
+  // Admin updates user's password
   adminUpdatePassword = asyncHandler(async (req, res) => {
     const { userId } = req.params;
     const { password } = req.body;
@@ -315,13 +333,14 @@ class UserControllers {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot change other super admin passwords');
       }
     } 
-    // Admin can only change passwords for users they created
+    // Admin can change passwords for users in their business
     else if (req.user.role === 'ADMIN') {
       const user = await this.services.getUserById(userId);
       
-      // if (!user.createdBy || user.createdBy.toString() !== req.user._id.toString()) {
-      //   throw new CustomError(httpStatus.FORBIDDEN, 'You can only change passwords for users you created');
-      // }
+      // Check if user is in the same business as the admin
+      if (user.businessInfo?.businessName !== req.user.businessInfo?.businessName) {
+        throw new CustomError(httpStatus.FORBIDDEN, 'You can only change passwords for users in your business');
+      }
       
       if (user.role === 'SUPER_ADMIN') {
         throw new CustomError(httpStatus.FORBIDDEN, 'Cannot change super admin passwords');
