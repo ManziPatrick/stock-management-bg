@@ -462,13 +462,15 @@ async readAll(query: Record<string, unknown> = {}) {
   };
   
   
-    if (userRole === 'ACCOUNTANT'||'KEEPER') {
+   if (userRole === 'ACCOUNTANT' || userRole === 'KEEPER') {
     // Accountants see all sales except rejected
     matchStage.$match.status = { $in: ['approved', 'credit', 'pending','rejected'] };
+        console.log("matchStage.$match",matchStage.$match)
     } else {
-    // Regular users see all their sales except rejected
+    
     matchStage.$match.status = { $in: ['approved', 'credit',] };
-    // matchStage.$match.user = new Types.ObjectId(userId);
+    console.log("matchStage",matchStage)
+
   }
 
   try {
