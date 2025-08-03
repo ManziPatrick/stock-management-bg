@@ -68,6 +68,7 @@ async processProductWithInventory(product: any) {
     productName: productDoc.name,
     productPrice: productDoc.price, // assuming this is the original cost
     SellingPrice: product.SellingPrice,
+    default_price:product.default_price,
     quantity: product.quantity,
     inventoryReserved: true
   };

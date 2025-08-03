@@ -5,6 +5,7 @@ export interface IProductSale {
   productName: string;
   productPrice: number;
   SellingPrice: number;
+  default_price:number;
   quantity: number;
   // Track inventory status
   inventoryReserved: boolean; // Whether inventory was reserved on creation

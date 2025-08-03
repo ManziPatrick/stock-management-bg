@@ -16,7 +16,8 @@ export interface IProduct {
   name: string;
   measurement?: IMeasurement;
   brand?: Types.ObjectId;
-  price: number;
+  price: number; // Original price - only visible to ADMIN and SUPER_ADMIN
+  default_price: number; // Default selling price - visible to all users
   stock: number;
   description?: string;
   updatePurchases?: boolean;

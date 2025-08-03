@@ -9,6 +9,8 @@ import nodemailer from 'nodemailer';
 import Seller from '../seller/seller.model';
 import CustomError from '../../errors/customError';
 import { IProduct, IMeasurement } from './product.interface';
+import { canSetOriginalPrice } from '../../middlewares/priceFilter';
+import { TUserRole } from '../../constant/userRole';
 
 interface StockUpdate {
   seller: string;
@@ -310,10 +312,11 @@ class ProductServices extends BaseServices<any> {
     }
   }
 
-  async create(payload: Partial<IProduct>, userId: string): Promise<ProductCreateResponse> {
+  async create(payload: Partial<IProduct>, userId: string, userRole?: TUserRole): Promise<ProductCreateResponse> {
     try {
       // Log incoming payload for debugging
       console.log('Creating product with payload:', payload);
+      console.log('User role:', userRole);
       
       // Fix measurement structure if needed
       if (payload.measurement && payload.measurement['measurement'] && !payload.measurement['type']) {
@@ -324,6 +327,32 @@ class ProductServices extends BaseServices<any> {
         };
       }
   
+      // Validate that default_price is provided
+      if (!payload.default_price) {
+        throw new CustomError(400, 'Default price is required');
+      }
+  
+      // Handle price logic based on user role
+      let finalPrice = 0; // Default to 0 for non-admins
+      let finalDefaultPrice = payload.default_price;
+  
+      // Only ADMIN and SUPER_ADMIN can set the original price
+      if (canSetOriginalPrice(userRole) && payload.price !== undefined) {
+        finalPrice = payload.price; // Use the custom price they specified
+        console.log('Admin/Super_Admin setting custom price:', payload.price);
+      } else {
+        console.log('Non-admin user - setting price to 0 for admin to update later');
+      }
+  
+      console.log('Price calculation:', {
+        userRole,
+        canSetOriginalPrice: canSetOriginalPrice(userRole),
+        payloadPrice: payload.price,
+        payloadDefaultPrice: payload.default_price,
+        finalPrice,
+        finalDefaultPrice
+      });
+  
       const productData = {
         ...payload,
         user: new Types.ObjectId(userId),
@@ -331,6 +360,8 @@ class ProductServices extends BaseServices<any> {
         category: new Types.ObjectId(payload.category),
         createdBy: new Types.ObjectId(userId), // Set createdBy to the current user
         ...(payload.brand && { brand: new Types.ObjectId(payload.brand) }),
+        price: finalPrice,
+        default_price: finalDefaultPrice,
         stock: Number(payload.stock),
       };
       console.log('Product data to create:', productData);
@@ -386,7 +417,11 @@ class ProductServices extends BaseServices<any> {
   }
   
  
-  async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
+
+
+
+
+  async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string, userRole?: TUserRole }) {
     try {
       console.log("🚀 Updating product:", id);
       console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
@@ -405,15 +440,31 @@ class ProductServices extends BaseServices<any> {
         console.log('Measurement validation failed for:', payload.measurement);
         throw new CustomError(400, 'Invalid measurement data');
       }
+
+      // Handle price updates based on user role
+      const updateData: any = { ...payload };
+      
+      // Only ADMIN and SUPER_ADMIN can update original price
+      if (payload.price !== undefined && canSetOriginalPrice(options?.userRole)) {
+        updateData.price = payload.price;
+      } else if (payload.price !== undefined && !canSetOriginalPrice(options?.userRole)) {
+        delete updateData.price; // Remove price from update if user doesn't have permission
+        console.log("🚫 User doesn't have permission to update original price");
+      }
+
+      // Default price can always be updated if provided
+      if (payload.default_price !== undefined) {
+        updateData.default_price = payload.default_price;
+      }
   
       // Update the product without using transactions
       const updatedProduct = await this.model.findByIdAndUpdate(
         id,
         {
-          ...payload,
-          ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
-          ...(payload.category && { category: new Types.ObjectId(payload.category) }),
-          ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
+          ...updateData,
+          ...(updateData.seller && { seller: new Types.ObjectId(updateData.seller) }),
+          ...(updateData.category && { category: new Types.ObjectId(updateData.category) }),
+          ...(updateData.brand && { brand: new Types.ObjectId(updateData.brand) })
         },
         { new: true }
       ).populate(['category', 'brand', 'seller']);
@@ -499,105 +550,6 @@ class ProductServices extends BaseServices<any> {
       throw new CustomError(500, `Failed to update product: ${error.message}`);
     }
   }
-
-async update(id: string, payload: Partial<IProduct>, options?: { updatePurchases?: boolean, userId?: string }) {
-  try {
-    console.log("🚀 Updating product:", id);
-    console.log("🔄 Update Purchases Flag:", options?.updatePurchases);
-    console.log("📦 Payload received:", payload);
-
-    if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
-      throw new CustomError(400, 'Invalid measurement data');
-    }
-
-    // First check if product exists
-    const productExists = await this.model.findById(id);
-    if (!productExists) {
-      throw new CustomError(404, 'Product not found');
-    }
-
-    // Update the product without using transactions
-    const updatedProduct = await this.model.findByIdAndUpdate(
-      id,
-      {
-        ...payload,
-        ...(payload.seller && { seller: new Types.ObjectId(payload.seller) }),
-        ...(payload.category && { category: new Types.ObjectId(payload.category) }),
-        ...(payload.brand && { brand: new Types.ObjectId(payload.brand) })
-      },
-      { new: true }
-    ).populate(['category', 'brand', 'seller']);
-
-    console.log("✅ Product updated successfully:", updatedProduct);
-
-    // --- Update Purchase Records if Flag is True ---
-    if (options?.updatePurchases) {
-      console.log("🔄 Searching for purchases with productId:", id);
-      const purchases = await Purchase.find({
-        product: id,
-        stockAddition: { $ne: true }
-      });
-
-      console.log("🛒 Purchases found:", purchases.length);
-
-      for (const purchase of purchases) {
-        const updates: any = {};
-
-        if (payload.price && payload.price !== purchase.unitPrice) {
-          updates.unitPrice = payload.price;
-          updates.totalPrice = payload.price * purchase.quantity;
-        }
-
-        if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
-          updates.measurement = payload.measurement;
-        }
-
-        if (Object.keys(updates).length > 0) {
-          console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
-          try {
-            await Purchase.findByIdAndUpdate(
-              purchase._id, 
-              updates, 
-              { new: true } // Remove session completely
-            );
-          } catch (purchaseError) {
-            console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
-            // Continue with other purchases even if one fails
-          }
-        } else {
-          console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
-        }
-      }
-    } else {
-      console.log("⚠️ Purchases not updated. Flag not set.");
-    }
-
-    await this.sendProductNotification(updatedProduct, 'Updated');
-    await this.checkAndNotifyStock(updatedProduct);
-
-    return {
-      success: true,
-      statusCode: 200,
-      message: 'Product updated successfully',
-      data: updatedProduct
-    };
-
-  } catch (error) {
-    console.error("❌ Error updating product:", error);
-    if (error instanceof CustomError) throw error;
-    
-    if (error.name === 'ValidationError') {
-      throw new CustomError(400, Object.values(error.errors).map((err: any) => err.message).join(', '));
-    }
-    if (error.code === 11000) {
-      throw new CustomError(400, 'Duplicate product entry');
-    }
-    
-    throw new CustomError(500, `Failed to update product: ${error.message}`);
-  }
-}
-  
-  
 
   async delete(id: string) {
     try {

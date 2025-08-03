@@ -10,6 +10,7 @@ import { Types } from 'mongoose';
 import { IProduct } from './product.interface';
 import Purchase from '../purchase/purchase.model';
 import Product from './product.model';
+import { USER_ROLE } from '../../constant/userRole';
 
 class ProductControllers {
   services = productServices;
@@ -49,7 +50,8 @@ create = [
         seller: new Types.ObjectId(req.body.seller),
         category: new Types.ObjectId(req.body.category),
         ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
-        price: Number(req.body.price),
+        price: (req.user.role === "ADMIN" || req.user.role === "SUPER_ADMIN") ? Number(req.body.price) : undefined,
+        default_price: Number(req.body.default_price),
         stock: Number(req.body.quantity),
         description: req.body.description,
         unit: req.body.unit,
@@ -60,7 +62,7 @@ create = [
       };
 
       console.log('Product data before sending to service:', productData);
-      const result = await this.services.create(productData, req.user._id);
+      const result = await this.services.create(productData, req.user._id, req.user.role);
       sendResponse(res, result);
     } catch (error: any) {
       console.error('Error in product creation controller:', error);
