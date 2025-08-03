@@ -40,6 +40,7 @@ productRoute.get('/total', product_controllers_1.default.getTotalProduct);
 productRoute.post('/bulk-delete', product_controllers_1.default.bulkDelete);
 productRoute.post('/', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN'), product_controllers_1.default.create);
 productRoute.get('/updated', verifyAuth_1.verifyAuth, (0, verifyAuth_1.authorizeRoles)('ADMIN', 'KEEPER', 'ACCOUNTANT', 'SUPER_ADMIN'), product_controllers_1.default.getCollectionDiscrepancies);
+productRoute.patch('/:id/price', (0, verifyAuth_1.authorizeRoles)('ADMIN', 'SUPER_ADMIN'), product_controllers_1.default.updatePrice);
 // productRoute.get('/', productControllers.readAll);
 productRoute.patch('/:id/add', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN'), (0, validateRequest_1.default)(product_validator_1.default.addStockSchema), product_controllers_1.default.addStock);
 productRoute.patch('/:id', (0, verifyAuth_1.authorizeRoles)('KEEPER', 'ADMIN', 'ACCOUNTANT', 'SUPER_ADMIN'), (0, validateRequest_1.default)(product_validator_1.default.updateSchema), product_controllers_1.default.updateProduct);

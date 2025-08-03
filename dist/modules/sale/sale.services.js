@@ -82,6 +82,7 @@ class SaleServices extends baseServices_1.default {
                 productName: productDoc.name,
                 productPrice: productDoc.price, // assuming this is the original cost
                 SellingPrice: product.SellingPrice,
+                default_price: product.default_price,
                 quantity: product.quantity,
                 inventoryReserved: true
             };
@@ -94,12 +95,14 @@ class SaleServices extends baseServices_1.default {
                 const transactionId = new mongoose_1.default.Types.ObjectId();
                 const saleDate = new Date(payload.date);
                 // Process all products and reserve inventory
-                const processedProducts = yield Promise.all(payload.products.map(product => this.processProductWithInventory(product)));
-                // Calculate total amount
-                const totalAmount = processedProducts.reduce((sum, product) => sum + (product.quantity * product.SellingPrice), 0);
+                const processedProducts = yield Promise.all(payload.products.map((product) => this.processProductWithInventory(product)));
+                // Calculate total amount and total quantity
+                const totalAmount = processedProducts.reduce((sum, product) => sum + product.quantity * product.SellingPrice, 0);
+                const totalQuantity = processedProducts.reduce((sum, product) => sum + product.quantity, 0);
                 // Create sale transaction WITHOUT session or transaction
                 const saleTransaction = yield sale_model_1.default.create(Object.assign({ user: userId, buyerName: payload.buyerName, date: saleDate, paymentMode: payload.paymentMode, paymentDetails: payload.paymentDetails, products: processedProducts, transactionId,
-                    totalAmount, status: 'pending', inventoryStatus: 'reserved', isProductsCollected: false, intendedAsCreditSale: payload.status === 'credit' }, (payload.debitDetails && {
+                    totalAmount,
+                    totalQuantity, status: 'pending', inventoryStatus: 'reserved', isProductsCollected: false, intendedAsCreditSale: payload.status === 'credit' }, (payload.debitDetails && {
                     paidAmount: payload.debitDetails.paidAmount || 0,
                     debitDetails: payload.debitDetails
                 })));
@@ -168,9 +171,7 @@ class SaleServices extends baseServices_1.default {
                 let monthlyTransactionCount = 0;
                 const monthlyProcessedTransactions = new Set();
                 // For credit sales, we need to fetch debit records to get accurate paid amounts
-                const creditSaleIds = monthlySales
-                    .filter(sale => sale.status === 'credit')
-                    .map(sale => sale._id.toString());
+                const creditSaleIds = monthlySales.filter((sale) => sale.status === 'credit').map((sale) => sale._id.toString());
                 let debitRecords = [];
                 if (creditSaleIds.length > 0) {
                     debitRecords = yield debits_models_1.DebitModel.find({
@@ -186,7 +187,7 @@ class SaleServices extends baseServices_1.default {
                         // Calculate amount based on status
                         if (sale.status === 'credit') {
                             // For credit sales, get the actual paid amount from debit records
-                            const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
+                            const relatedDebit = debitRecords.find((debit) => debit.saleId === sale._id.toString());
                             monthlyTotalSales += (relatedDebit === null || relatedDebit === void 0 ? void 0 : relatedDebit.paidAmount) || sale.paidAmount || 0;
                         }
                         else {
@@ -237,10 +238,10 @@ class SaleServices extends baseServices_1.default {
                     },
                     {
                         $group: {
-                            _id: "$transactionId", // Group by transaction ID to avoid duplicates
-                            status: { $first: "$status" },
-                            totalAmount: { $first: "$totalAmount" },
-                            paidAmount: { $first: "$paidAmount" }
+                            _id: '$transactionId', // Group by transaction ID to avoid duplicates
+                            status: { $first: '$status' },
+                            totalAmount: { $first: '$totalAmount' },
+                            paidAmount: { $first: '$paidAmount' }
                         }
                     },
                     {
@@ -248,11 +249,7 @@ class SaleServices extends baseServices_1.default {
                             _id: null,
                             totalSales: {
                                 $sum: {
-                                    $cond: [
-                                        { $eq: ["$status", "credit"] },
-                                        { $ifNull: ["$paidAmount", 0] },
-                                        "$totalAmount"
-                                    ]
+                                    $cond: [{ $eq: ['$status', 'credit'] }, { $ifNull: ['$paidAmount', 0] }, '$totalAmount']
                                 }
                             },
                             transactionCount: { $sum: 1 }
@@ -275,10 +272,10 @@ class SaleServices extends baseServices_1.default {
                     },
                     {
                         $group: {
-                            _id: "$transactionId", // Group by transaction ID to avoid duplicates
-                            status: { $first: "$status" },
-                            totalAmount: { $first: "$totalAmount" },
-                            paidAmount: { $first: "$paidAmount" }
+                            _id: '$transactionId', // Group by transaction ID to avoid duplicates
+                            status: { $first: '$status' },
+                            totalAmount: { $first: '$totalAmount' },
+                            paidAmount: { $first: '$paidAmount' }
                         }
                     },
                     {
@@ -286,11 +283,7 @@ class SaleServices extends baseServices_1.default {
                             _id: null,
                             totalSales: {
                                 $sum: {
-                                    $cond: [
-                                        { $eq: ["$status", "credit"] },
-                                        { $ifNull: ["$paidAmount", 0] },
-                                        "$totalAmount"
-                                    ]
+                                    $cond: [{ $eq: ['$status', 'credit'] }, { $ifNull: ['$paidAmount', 0] }, '$totalAmount']
                                 }
                             },
                             transactionCount: { $sum: 1 }
@@ -419,39 +412,31 @@ class SaleServices extends baseServices_1.default {
             const userRole = query.userRole;
             let matchStage = {
                 $match: {
-                    $or: [
-                        { productName: { $regex: search, $options: 'i' } },
-                        { buyerName: { $regex: search, $options: 'i' } },
-                    ],
-                },
+                    $or: [{ productName: { $regex: search, $options: 'i' } }, { buyerName: { $regex: search, $options: 'i' } }]
+                }
             };
             if (userRole === 'ACCOUNTANT' || userRole === 'KEEPER') {
                 // Accountants see all sales except rejected
                 matchStage.$match.status = { $in: ['approved', 'credit', 'pending', 'rejected'] };
-                console.log("matchStage.$match", matchStage.$match);
+                console.log('matchStage.$match', matchStage.$match);
             }
             else {
-                matchStage.$match.status = { $in: ['approved', 'credit',] };
-                console.log("matchStage", matchStage);
+                matchStage.$match.status = { $in: ['approved', 'credit'] };
+                console.log('matchStage', matchStage);
             }
             try {
                 // Get paginated results
                 const skip = (page - 1) * limit;
-                const data = yield this.model
-                    .find(matchStage.$match)
-                    .sort({ createdAt: -1 })
-                    .skip(skip)
-                    .limit(limit)
-                    .lean();
+                const data = yield this.model.find(matchStage.$match).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
                 // For credit sales, fetch the related debit records
-                const saleIds = data.filter(sale => sale.status === 'credit').map(sale => sale._id.toString());
+                const saleIds = data.filter((sale) => sale.status === 'credit').map((sale) => sale._id.toString());
                 let debitRecords = [];
                 if (saleIds.length > 0) {
                     debitRecords = yield debits_models_1.DebitModel.find({ saleId: { $in: saleIds } }).lean();
                     // Enhance credit sales with their debit information
-                    data.forEach(sale => {
+                    data.forEach((sale) => {
                         if (sale.status === 'credit') {
-                            const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
+                            const relatedDebit = debitRecords.find((debit) => debit.saleId === sale._id.toString());
                             if (relatedDebit) {
                                 sale.paidAmount = relatedDebit.paidAmount;
                                 sale.remainingAmount = relatedDebit.remainingAmount;
@@ -472,7 +457,7 @@ class SaleServices extends baseServices_1.default {
                 let transferTotal = 0;
                 let creditPaidTotal = 0;
                 // Process each sale to calculate margins correctly
-                data.forEach(sale => {
+                data.forEach((sale) => {
                     totalCount++;
                     // FIXED: Calculate sale amount based on status - include pending sales
                     let saleAmount = 0;
@@ -502,13 +487,13 @@ class SaleServices extends baseServices_1.default {
                     }
                     // Track paid amounts for credit sales separately
                     if (sale.status === 'credit') {
-                        creditPaidTotal += (sale.paidAmount || 0);
+                        creditPaidTotal += sale.paidAmount || 0;
                     }
                     // Calculate margin and cost price
                     if (Array.isArray(sale.products)) {
                         let saleMargin = 0;
                         let saleCost = 0;
-                        sale.products.forEach(product => {
+                        sale.products.forEach((product) => {
                             const quantity = product.quantity || 0;
                             const sellingPrice = product.SellingPrice || 0;
                             const productPrice = product.productPrice || 0;
@@ -532,26 +517,23 @@ class SaleServices extends baseServices_1.default {
                 // Get credit statistics
                 const [creditStats] = (yield this.model.aggregate([
                     {
-                        $match: Object.assign(Object.assign({ status: 'credit' }, (userRole !== 'ACCOUNTANT' && { user: new mongoose_1.Types.ObjectId(userId) })), { $or: [
-                                { productName: { $regex: search, $options: 'i' } },
-                                { buyerName: { $regex: search, $options: 'i' } },
-                            ] })
+                        $match: Object.assign(Object.assign({ status: 'credit' }, (userRole !== 'ACCOUNTANT' && { user: new mongoose_1.Types.ObjectId(userId) })), { $or: [{ productName: { $regex: search, $options: 'i' } }, { buyerName: { $regex: search, $options: 'i' } }] })
                     },
                     {
                         $group: {
                             _id: null,
-                            totalCreditAmount: { $sum: "$totalAmount" },
+                            totalCreditAmount: { $sum: '$totalAmount' },
                             totalCreditCount: { $sum: 1 },
-                            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
-                            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+                            totalPaidAmount: { $sum: { $ifNull: ['$paidAmount', 0] } },
+                            totalRemainingCredit: { $sum: { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] } }
                         }
                     }
                 ])) || { totalCreditAmount: 0, totalCreditCount: 0, totalPaidAmount: 0, totalRemainingCredit: 0 };
                 // Calculate credit margin
                 let totalCreditMargin = 0;
-                const creditSales = data.filter(sale => sale.status === 'credit');
-                creditSales.forEach(sale => {
-                    totalCreditMargin += (sale.marginAmount || 0);
+                const creditSales = data.filter((sale) => sale.status === 'credit');
+                creditSales.forEach((sale) => {
+                    totalCreditMargin += sale.marginAmount || 0;
                 });
                 // Get expenses for the entire period
                 const totalExpenses = yield this.calculateExpenses();
@@ -575,8 +557,8 @@ class SaleServices extends baseServices_1.default {
                     totalCreditMargin: totalCreditMargin || 0
                 };
                 const totalCount2 = yield this.model.countDocuments(matchStage.$match);
-                console.log("simplifiedStats", simplifiedStats);
-                console.log("data", data);
+                console.log('simplifiedStats', simplifiedStats);
+                console.log('data', data);
                 return {
                     statusCode: 200,
                     success: true,
@@ -589,8 +571,8 @@ class SaleServices extends baseServices_1.default {
                         totalPages: Math.ceil(totalCount2 / limit),
                         totalSales: {
                             stats: simplifiedStats
-                        },
-                    },
+                        }
+                    }
                 };
             }
             catch (error) {
@@ -603,7 +585,7 @@ class SaleServices extends baseServices_1.default {
         return __awaiter(this, void 0, void 0, function* () {
             if (!dailyStats || dailyStats.length === 0)
                 return [];
-            const dates = dailyStats.map(stat => ({
+            const dates = dailyStats.map((stat) => ({
                 year: stat._id.year,
                 month: stat._id.month,
                 day: stat._id.day
@@ -628,10 +610,8 @@ class SaleServices extends baseServices_1.default {
                 }
             ]);
             // Combine with dailyStats
-            return dailyStats.map(stat => {
-                const matchingExpense = dailyExpenses.find(exp => exp._id.year === stat._id.year &&
-                    exp._id.month === stat._id.month &&
-                    exp._id.day === stat._id.day);
+            return dailyStats.map((stat) => {
+                const matchingExpense = dailyExpenses.find((exp) => exp._id.year === stat._id.year && exp._id.month === stat._id.month && exp._id.day === stat._id.day);
                 const expenses = matchingExpense ? matchingExpense.dailyExpenses : 0;
                 return Object.assign(Object.assign({}, stat), { expenses, netProfit: stat.dailyProfit - expenses });
             });
@@ -661,9 +641,8 @@ class SaleServices extends baseServices_1.default {
                 }
             ]);
             // Combine with monthlyStats
-            return monthlyStats.map(stat => {
-                const matchingExpense = monthlyExpenses.find(exp => exp._id.year === stat._id.year &&
-                    exp._id.month === stat._id.month);
+            return monthlyStats.map((stat) => {
+                const matchingExpense = monthlyExpenses.find((exp) => exp._id.year === stat._id.year && exp._id.month === stat._id.month);
                 const expenses = matchingExpense ? matchingExpense.monthlyExpenses : 0;
                 return Object.assign(Object.assign({}, stat), { expenses, netProfit: stat.monthlyTotal - expenses // Assuming profit was calculated already
                  });
@@ -693,8 +672,8 @@ class SaleServices extends baseServices_1.default {
                 }
             ]);
             // Combine with yearlyStats
-            return yearlyStats.map(stat => {
-                const matchingExpense = yearlyExpenses.find(exp => exp._id.year === stat._id.year);
+            return yearlyStats.map((stat) => {
+                const matchingExpense = yearlyExpenses.find((exp) => exp._id.year === stat._id.year);
                 const expenses = matchingExpense ? matchingExpense.yearlyExpenses : 0;
                 return Object.assign(Object.assign({}, stat), { expenses, netProfit: stat.yearlyTotal - expenses // Assuming profit was calculated already
                  });
@@ -712,22 +691,19 @@ class SaleServices extends baseServices_1.default {
                     $project: {
                         _id: 1,
                         buyerName: 1,
-                        totalPrice: "$totalAmount",
+                        totalPrice: '$totalAmount',
                         paymentMode: 1,
                         createdAt: 1,
                         // Calculate profit from products array
                         profit: {
                             $reduce: {
-                                input: "$products",
+                                input: '$products',
                                 initialValue: 0,
                                 in: {
                                     $add: [
-                                        "$$value",
+                                        '$$value',
                                         {
-                                            $multiply: [
-                                                "$$this.quantity",
-                                                { $subtract: ["$$this.SellingPrice", "$$this.productPrice"] }
-                                            ]
+                                            $multiply: ['$$this.quantity', { $subtract: ['$$this.SellingPrice', '$$this.productPrice'] }]
                                         }
                                     ]
                                 }
@@ -744,7 +720,8 @@ class SaleServices extends baseServices_1.default {
             var _a, _b, _c, _d;
             try {
                 // Find all sales with this transaction ID
-                const sales = yield this.model.find({ transactionId })
+                const sales = yield this.model
+                    .find({ transactionId })
                     .populate('user', 'name email')
                     .sort({ createdAt: -1 })
                     .lean();
@@ -759,7 +736,7 @@ class SaleServices extends baseServices_1.default {
                     totalAmount: sales.reduce((sum, sale) => sum + (sale.totalAmount || 0), 0), // Changed from totalPrice to totalAmount
                     totalProfit: sales.reduce((sum, sale) => {
                         if (sale.SellingPrice && sale.productPrice && sale.quantity) {
-                            return sum + (sale.quantity * (sale.SellingPrice - sale.productPrice));
+                            return sum + sale.quantity * (sale.SellingPrice - sale.productPrice);
                         }
                         return sum;
                     }, 0),
@@ -796,79 +773,63 @@ class SaleServices extends baseServices_1.default {
                 {
                     $group: {
                         _id: {
-                            transactionId: "$transactionId",
-                            year: { $year: "$date" },
-                            month: { $month: "$date" },
-                            day: { $dayOfMonth: "$date" },
-                            paymentMode: "$paymentMode"
+                            transactionId: '$transactionId',
+                            year: { $year: '$date' },
+                            month: { $month: '$date' },
+                            day: { $dayOfMonth: '$date' },
+                            paymentMode: '$paymentMode'
                         },
-                        total: { $first: "$totalAmount" }, // Use first since totalAmount is same for the transaction
+                        total: { $first: '$totalAmount' }, // Use first since totalAmount is same for the transaction
                         count: { $sum: 1 } // Count transactions
                     }
                 },
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year",
-                            month: "$_id.month",
-                            day: "$_id.day",
-                            paymentMode: "$_id.paymentMode"
+                            year: '$_id.year',
+                            month: '$_id.month',
+                            day: '$_id.day',
+                            paymentMode: '$_id.paymentMode'
                         },
-                        total: { $sum: "$total" },
-                        count: { $sum: "$count" }
+                        total: { $sum: '$total' },
+                        count: { $sum: '$count' }
                     }
                 },
                 // Finally group just by date to get all payment modes
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year",
-                            month: "$_id.month",
-                            day: "$_id.day"
+                            year: '$_id.year',
+                            month: '$_id.month',
+                            day: '$_id.day'
                         },
-                        dailyTotal: { $sum: "$total" },
-                        transactionCount: { $sum: "$count" },
+                        dailyTotal: { $sum: '$total' },
+                        transactionCount: { $sum: '$count' },
                         payments: {
                             $push: {
-                                mode: "$_id.paymentMode",
-                                total: "$total",
-                                count: "$count"
+                                mode: '$_id.paymentMode',
+                                total: '$total',
+                                count: '$count'
                             }
                         },
                         cashTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cash"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cash'] }, '$total', 0]
                             }
                         },
                         momoTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "momo"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'momo'] }, '$total', 0]
                             }
                         },
                         chequeTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cheque"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cheque'] }, '$total', 0]
                             }
                         },
                         transferTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "transfer"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'transfer'] }, '$total', 0]
                             }
                         }
                     }
@@ -876,48 +837,48 @@ class SaleServices extends baseServices_1.default {
                 // Now calculate profit in a separate stage after accurately counting transactions
                 {
                     $lookup: {
-                        from: "saletransactions", // The actual collection name in MongoDB
+                        from: 'saletransactions', // The actual collection name in MongoDB
                         let: {
-                            year: "$_id.year",
-                            month: "$_id.month",
-                            day: "$_id.day"
+                            year: '$_id.year',
+                            month: '$_id.month',
+                            day: '$_id.day'
                         },
                         pipeline: [
                             {
                                 $match: {
                                     $expr: {
                                         $and: [
-                                            { $eq: [{ $year: "$date" }, "$$year"] },
-                                            { $eq: [{ $month: "$date" }, "$$month"] },
-                                            { $eq: [{ $dayOfMonth: "$date" }, "$$day"] }
+                                            { $eq: [{ $year: '$date' }, '$$year'] },
+                                            { $eq: [{ $month: '$date' }, '$$month'] },
+                                            { $eq: [{ $dayOfMonth: '$date' }, '$$day'] }
                                         ]
                                     }
                                 }
                             },
-                            { $unwind: "$products" },
+                            { $unwind: '$products' },
                             {
                                 $group: {
                                     _id: null,
                                     dailyProfit: {
                                         $sum: {
                                             $multiply: [
-                                                "$products.quantity",
-                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                                '$products.quantity',
+                                                { $subtract: ['$products.SellingPrice', '$products.productPrice'] }
                                             ]
                                         }
                                     }
                                 }
                             }
                         ],
-                        as: "profitData"
+                        as: 'profitData'
                     }
                 },
                 {
                     $addFields: {
                         dailyProfit: {
                             $cond: {
-                                if: { $gt: [{ $size: "$profitData" }, 0] },
-                                then: { $arrayElemAt: ["$profitData.dailyProfit", 0] },
+                                if: { $gt: [{ $size: '$profitData' }, 0] },
+                                then: { $arrayElemAt: ['$profitData.dailyProfit', 0] },
                                 else: 0
                             }
                         }
@@ -936,7 +897,7 @@ class SaleServices extends baseServices_1.default {
                         transferTotal: 1
                     }
                 },
-                { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
+                { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
             ]);
         });
     }
@@ -950,19 +911,15 @@ class SaleServices extends baseServices_1.default {
                 {
                     $group: {
                         _id: {
-                            transactionId: "$transactionId",
-                            year: { $year: "$date" },
-                            month: { $month: "$date" },
-                            paymentMode: "$paymentMode",
-                            status: "$status" // Track status for credit sales
+                            transactionId: '$transactionId',
+                            year: { $year: '$date' },
+                            month: { $month: '$date' },
+                            paymentMode: '$paymentMode',
+                            status: '$status' // Track status for credit sales
                         },
                         total: {
                             $first: {
-                                $cond: [
-                                    { $eq: ["$status", "credit"] },
-                                    { $ifNull: ["$paidAmount", 0] },
-                                    "$totalAmount"
-                                ]
+                                $cond: [{ $eq: ['$status', 'credit'] }, { $ifNull: ['$paidAmount', 0] }, '$totalAmount']
                             }
                         },
                         count: { $sum: 1 }
@@ -972,64 +929,48 @@ class SaleServices extends baseServices_1.default {
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year",
-                            month: "$_id.month",
-                            paymentMode: "$_id.paymentMode"
+                            year: '$_id.year',
+                            month: '$_id.month',
+                            paymentMode: '$_id.paymentMode'
                         },
-                        total: { $sum: "$total" },
-                        count: { $sum: "$count" }
+                        total: { $sum: '$total' },
+                        count: { $sum: '$count' }
                     }
                 },
                 // Finally group just by month
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year",
-                            month: "$_id.month"
+                            year: '$_id.year',
+                            month: '$_id.month'
                         },
-                        monthlyTotal: { $sum: "$total" },
-                        transactionCount: { $sum: "$count" },
+                        monthlyTotal: { $sum: '$total' },
+                        transactionCount: { $sum: '$count' },
                         payments: {
                             $push: {
-                                mode: "$_id.paymentMode",
-                                total: "$total",
-                                count: "$count"
+                                mode: '$_id.paymentMode',
+                                total: '$total',
+                                count: '$count'
                             }
                         },
                         cashTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cash"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cash'] }, '$total', 0]
                             }
                         },
                         momoTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "momo"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'momo'] }, '$total', 0]
                             }
                         },
                         chequeTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cheque"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cheque'] }, '$total', 0]
                             }
                         },
                         transferTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "transfer"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'transfer'] }, '$total', 0]
                             }
                         }
                     }
@@ -1037,46 +978,46 @@ class SaleServices extends baseServices_1.default {
                 // Calculate profit separately with the same credit handling approach
                 {
                     $lookup: {
-                        from: "saletransactions",
+                        from: 'saletransactions',
                         let: {
-                            year: "$_id.year",
-                            month: "$_id.month"
+                            year: '$_id.year',
+                            month: '$_id.month'
                         },
                         pipeline: [
                             {
                                 $match: {
                                     $expr: {
                                         $and: [
-                                            { $eq: [{ $year: "$date" }, "$$year"] },
-                                            { $eq: [{ $month: "$date" }, "$$month"] },
-                                            { $in: ["$status", ["approved", "credit"]] }
+                                            { $eq: [{ $year: '$date' }, '$$year'] },
+                                            { $eq: [{ $month: '$date' }, '$$month'] },
+                                            { $in: ['$status', ['approved', 'credit']] }
                                         ]
                                     }
                                 }
                             },
-                            { $unwind: "$products" },
+                            { $unwind: '$products' },
                             {
                                 $group: {
                                     _id: {
-                                        status: "$status"
+                                        status: '$status'
                                     },
                                     monthlyProfit: {
                                         $sum: {
                                             $cond: [
-                                                { $eq: ["$status", "credit"] },
+                                                { $eq: ['$status', 'credit'] },
                                                 // For credit sales, calculate profit based on paidAmount proportion
                                                 {
                                                     $multiply: [
                                                         {
                                                             $divide: [
-                                                                { $ifNull: ["$paidAmount", 0] },
-                                                                { $cond: [{ $eq: ["$totalAmount", 0] }, 1, "$totalAmount"] }
+                                                                { $ifNull: ['$paidAmount', 0] },
+                                                                { $cond: [{ $eq: ['$totalAmount', 0] }, 1, '$totalAmount'] }
                                                             ]
                                                         },
                                                         {
                                                             $multiply: [
-                                                                "$products.quantity",
-                                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                                                '$products.quantity',
+                                                                { $subtract: ['$products.SellingPrice', '$products.productPrice'] }
                                                             ]
                                                         }
                                                     ]
@@ -1084,8 +1025,8 @@ class SaleServices extends baseServices_1.default {
                                                 // For approved sales, calculate regular profit
                                                 {
                                                     $multiply: [
-                                                        "$products.quantity",
-                                                        { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                                        '$products.quantity',
+                                                        { $subtract: ['$products.SellingPrice', '$products.productPrice'] }
                                                     ]
                                                 }
                                             ]
@@ -1096,19 +1037,19 @@ class SaleServices extends baseServices_1.default {
                             {
                                 $group: {
                                     _id: null,
-                                    monthlyProfit: { $sum: "$monthlyProfit" }
+                                    monthlyProfit: { $sum: '$monthlyProfit' }
                                 }
                             }
                         ],
-                        as: "profitData"
+                        as: 'profitData'
                     }
                 },
                 {
                     $addFields: {
                         monthlyProfit: {
                             $cond: {
-                                if: { $gt: [{ $size: "$profitData" }, 0] },
-                                then: { $arrayElemAt: ["$profitData.monthlyProfit", 0] },
+                                if: { $gt: [{ $size: '$profitData' }, 0] },
+                                then: { $arrayElemAt: ['$profitData.monthlyProfit', 0] },
                                 else: 0
                             }
                         }
@@ -1127,7 +1068,7 @@ class SaleServices extends baseServices_1.default {
                         transferTotal: 1
                     }
                 },
-                { $sort: { "_id.year": -1, "_id.month": -1 } }
+                { $sort: { '_id.year': -1, '_id.month': -1 } }
             ]);
         });
     }
@@ -1141,18 +1082,14 @@ class SaleServices extends baseServices_1.default {
                 {
                     $group: {
                         _id: {
-                            transactionId: "$transactionId",
-                            year: { $year: "$date" },
-                            paymentMode: "$paymentMode",
-                            status: "$status"
+                            transactionId: '$transactionId',
+                            year: { $year: '$date' },
+                            paymentMode: '$paymentMode',
+                            status: '$status'
                         },
                         total: {
                             $first: {
-                                $cond: [
-                                    { $eq: ["$status", "credit"] },
-                                    { $ifNull: ["$paidAmount", 0] },
-                                    "$totalAmount"
-                                ]
+                                $cond: [{ $eq: ['$status', 'credit'] }, { $ifNull: ['$paidAmount', 0] }, '$totalAmount']
                             }
                         },
                         count: { $sum: 1 }
@@ -1162,62 +1099,46 @@ class SaleServices extends baseServices_1.default {
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year",
-                            paymentMode: "$_id.paymentMode"
+                            year: '$_id.year',
+                            paymentMode: '$_id.paymentMode'
                         },
-                        total: { $sum: "$total" },
-                        count: { $sum: "$count" }
+                        total: { $sum: '$total' },
+                        count: { $sum: '$count' }
                     }
                 },
                 // Finally group just by year
                 {
                     $group: {
                         _id: {
-                            year: "$_id.year"
+                            year: '$_id.year'
                         },
-                        yearlyTotal: { $sum: "$total" },
-                        transactionCount: { $sum: "$count" },
+                        yearlyTotal: { $sum: '$total' },
+                        transactionCount: { $sum: '$count' },
                         payments: {
                             $push: {
-                                mode: "$_id.paymentMode",
-                                total: "$total",
-                                count: "$count"
+                                mode: '$_id.paymentMode',
+                                total: '$total',
+                                count: '$count'
                             }
                         },
                         cashTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cash"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cash'] }, '$total', 0]
                             }
                         },
                         momoTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "momo"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'momo'] }, '$total', 0]
                             }
                         },
                         chequeTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "cheque"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'cheque'] }, '$total', 0]
                             }
                         },
                         transferTotal: {
                             $sum: {
-                                $cond: [
-                                    { $eq: ["$_id.paymentMode", "transfer"] },
-                                    "$total",
-                                    0
-                                ]
+                                $cond: [{ $eq: ['$_id.paymentMode', 'transfer'] }, '$total', 0]
                             }
                         }
                     }
@@ -1225,42 +1146,39 @@ class SaleServices extends baseServices_1.default {
                 // Calculate profit separately
                 {
                     $lookup: {
-                        from: "saletransactions",
-                        let: { year: "$_id.year" },
+                        from: 'saletransactions',
+                        let: { year: '$_id.year' },
                         pipeline: [
                             {
                                 $match: {
                                     $expr: {
-                                        $and: [
-                                            { $eq: [{ $year: "$date" }, "$$year"] },
-                                            { $in: ["$status", ["approved", "credit"]] }
-                                        ]
+                                        $and: [{ $eq: [{ $year: '$date' }, '$$year'] }, { $in: ['$status', ['approved', 'credit']] }]
                                     }
                                 }
                             },
-                            { $unwind: "$products" },
+                            { $unwind: '$products' },
                             {
                                 $group: {
                                     _id: {
-                                        status: "$status"
+                                        status: '$status'
                                     },
                                     yearlyProfit: {
                                         $sum: {
                                             $cond: [
-                                                { $eq: ["$status", "credit"] },
+                                                { $eq: ['$status', 'credit'] },
                                                 // For credit sales, calculate profit based on paidAmount proportion
                                                 {
                                                     $multiply: [
                                                         {
                                                             $divide: [
-                                                                { $ifNull: ["$paidAmount", 0] },
-                                                                { $cond: [{ $eq: ["$totalAmount", 0] }, 1, "$totalAmount"] }
+                                                                { $ifNull: ['$paidAmount', 0] },
+                                                                { $cond: [{ $eq: ['$totalAmount', 0] }, 1, '$totalAmount'] }
                                                             ]
                                                         },
                                                         {
                                                             $multiply: [
-                                                                "$products.quantity",
-                                                                { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                                                '$products.quantity',
+                                                                { $subtract: ['$products.SellingPrice', '$products.productPrice'] }
                                                             ]
                                                         }
                                                     ]
@@ -1268,8 +1186,8 @@ class SaleServices extends baseServices_1.default {
                                                 // For approved sales, calculate regular profit
                                                 {
                                                     $multiply: [
-                                                        "$products.quantity",
-                                                        { $subtract: ["$products.SellingPrice", "$products.productPrice"] }
+                                                        '$products.quantity',
+                                                        { $subtract: ['$products.SellingPrice', '$products.productPrice'] }
                                                     ]
                                                 }
                                             ]
@@ -1280,19 +1198,19 @@ class SaleServices extends baseServices_1.default {
                             {
                                 $group: {
                                     _id: null,
-                                    yearlyProfit: { $sum: "$yearlyProfit" }
+                                    yearlyProfit: { $sum: '$yearlyProfit' }
                                 }
                             }
                         ],
-                        as: "profitData"
+                        as: 'profitData'
                     }
                 },
                 {
                     $addFields: {
                         yearlyProfit: {
                             $cond: {
-                                if: { $gt: [{ $size: "$profitData" }, 0] },
-                                then: { $arrayElemAt: ["$profitData.yearlyProfit", 0] },
+                                if: { $gt: [{ $size: '$profitData' }, 0] },
+                                then: { $arrayElemAt: ['$profitData.yearlyProfit', 0] },
                                 else: 0
                             }
                         }
@@ -1311,7 +1229,7 @@ class SaleServices extends baseServices_1.default {
                         transferTotal: 1
                     }
                 },
-                { $sort: { "_id.year": -1 } }
+                { $sort: { '_id.year': -1 } }
             ]);
         });
     }
@@ -1324,7 +1242,7 @@ class SaleServices extends baseServices_1.default {
                     status: 'credit'
                 });
                 // Get all debit records related to these sales
-                const saleIds = creditSales.map(sale => sale._id.toString());
+                const saleIds = creditSales.map((sale) => sale._id.toString());
                 const debitRecords = yield debits_models_1.DebitModel.find({
                     saleId: { $in: saleIds }
                 });
@@ -1333,18 +1251,18 @@ class SaleServices extends baseServices_1.default {
                 const totalPaidAmount = debitRecords.reduce((sum, debit) => sum + debit.paidAmount, 0);
                 const totalRemainingAmount = debitRecords.reduce((sum, debit) => sum + debit.remainingAmount, 0);
                 // Group credits by status
-                const pendingCredits = debitRecords.filter(debit => debit.status === 'PENDING');
-                const completedCredits = debitRecords.filter(debit => debit.status === 'COMPLETED');
-                const overdueCredits = debitRecords.filter(debit => debit.status === 'OVERDUE');
+                const pendingCredits = debitRecords.filter((debit) => debit.status === 'PENDING');
+                const completedCredits = debitRecords.filter((debit) => debit.status === 'COMPLETED');
+                const overdueCredits = debitRecords.filter((debit) => debit.status === 'OVERDUE');
                 // Group by date (current month, previous months)
                 const now = new Date();
                 const currentMonth = now.getMonth();
                 const currentYear = now.getFullYear();
-                const currentMonthCredits = debitRecords.filter(debit => {
+                const currentMonthCredits = debitRecords.filter((debit) => {
                     const debitDate = new Date(debit.createdAt);
                     return debitDate.getMonth() === currentMonth && debitDate.getFullYear() === currentYear;
                 });
-                const previousMonthCredits = debitRecords.filter(debit => {
+                const previousMonthCredits = debitRecords.filter((debit) => {
                     const debitDate = new Date(debit.createdAt);
                     const isPreviousMonth = (debitDate.getMonth() === currentMonth - 1 && debitDate.getFullYear() === currentYear) ||
                         (currentMonth === 0 && debitDate.getMonth() === 11 && debitDate.getFullYear() === currentYear - 1);
@@ -1353,7 +1271,7 @@ class SaleServices extends baseServices_1.default {
                 // Credits that are due within the next 7 days
                 const nextWeekDueDate = new Date();
                 nextWeekDueDate.setDate(nextWeekDueDate.getDate() + 7);
-                const upcomingDueCredits = debitRecords.filter(debit => {
+                const upcomingDueCredits = debitRecords.filter((debit) => {
                     const dueDate = new Date(debit.dueDate);
                     return dueDate > now && dueDate <= nextWeekDueDate && debit.status === 'PENDING';
                 });
@@ -1410,8 +1328,8 @@ class SaleServices extends baseServices_1.default {
                 {
                     $match: {
                         user: new mongoose_1.Types.ObjectId(userId),
-                        date: { $exists: true, $ne: null },
-                    },
+                        date: { $exists: true, $ne: null }
+                    }
                 },
                 {
                     $group: {
@@ -1419,19 +1337,19 @@ class SaleServices extends baseServices_1.default {
                         totalQuantity: { $sum: '$quantity' },
                         totalSellingPrice: { $sum: { $multiply: ['$SellingPrice', '$quantity'] } },
                         totalProductPrice: { $sum: '$productPrice' },
-                        totalExpenses: { $first: totalExpenses },
-                    },
+                        totalExpenses: { $first: totalExpenses }
+                    }
                 },
                 {
                     $addFields: {
                         totalProfit: {
-                            $subtract: ['$totalSellingPrice', { $add: ['$totalProductPrice', '$totalExpenses'] }],
+                            $subtract: ['$totalSellingPrice', { $add: ['$totalProductPrice', '$totalExpenses'] }]
                         }
-                    },
+                    }
                 },
                 {
-                    $sort: { '_id.year': 1, '_id.week': 1 },
-                },
+                    $sort: { '_id.year': 1, '_id.week': 1 }
+                }
             ]);
             return {
                 weeklyData,
@@ -1441,7 +1359,7 @@ class SaleServices extends baseServices_1.default {
     }
     readAllDaily(query) {
         return __awaiter(this, void 0, void 0, function* () {
-            console.log("readAllDaily called with query:", query);
+            console.log('readAllDaily called with query:', query);
             const { startDate, endDate } = query;
             const today = new Date();
             let startDateTime;
@@ -1456,7 +1374,7 @@ class SaleServices extends baseServices_1.default {
                 startDateTime = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0));
                 endDateTime = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59, 999));
             }
-            console.log("Using date range:", startDateTime, "to", endDateTime);
+            console.log('Using date range:', startDateTime, 'to', endDateTime);
             const matchStage = {
                 $match: {
                     date: {
@@ -1469,18 +1387,16 @@ class SaleServices extends baseServices_1.default {
             try {
                 // Get all sales within the time range (approved or credit)
                 const sales = yield this.model.find(matchStage.$match).lean();
-                console.log("Sales fetched:", sales.length, "records");
+                console.log('Sales fetched:', sales.length, 'records');
                 // For credit sales, fetch the related debit records
-                const creditSaleIds = sales
-                    .filter(sale => sale.status === 'credit')
-                    .map(sale => sale._id.toString());
+                const creditSaleIds = sales.filter((sale) => sale.status === 'credit').map((sale) => sale._id.toString());
                 let debitRecords = [];
                 if (creditSaleIds.length > 0) {
                     debitRecords = yield debits_models_1.DebitModel.find({ saleId: { $in: creditSaleIds } }).lean();
                     // Enhance credit sales with their debit information
-                    sales.forEach(sale => {
+                    sales.forEach((sale) => {
                         if (sale.status === 'credit') {
-                            const relatedDebit = debitRecords.find(debit => debit.saleId === sale._id.toString());
+                            const relatedDebit = debitRecords.find((debit) => debit.saleId === sale._id.toString());
                             if (relatedDebit) {
                                 sale.paidAmount = relatedDebit.paidAmount;
                                 sale.remainingAmount = relatedDebit.remainingAmount;
@@ -1491,7 +1407,7 @@ class SaleServices extends baseServices_1.default {
                 }
                 // Process sales to calculate correct dailyStats
                 const dailyStatsMap = new Map();
-                sales.forEach(sale => {
+                sales.forEach((sale) => {
                     const saleDate = new Date(sale.date);
                     const dateKey = `${saleDate.getFullYear()}-${saleDate.getMonth() + 1}-${saleDate.getDate()}`;
                     if (!dailyStatsMap.has(dateKey)) {
@@ -1509,12 +1425,12 @@ class SaleServices extends baseServices_1.default {
                     const dailyEntry = dailyStatsMap.get(dateKey);
                     dailyEntry.ordersCount += 1;
                     // Calculate amount to add based on status
-                    const saleAmount = sale.status === 'credit' ? (sale.paidAmount || 0) : (sale.totalAmount || 0);
+                    const saleAmount = sale.status === 'credit' ? sale.paidAmount || 0 : sale.totalAmount || 0;
                     dailyEntry.dailyTotal += saleAmount;
                     // Calculate margin correctly
                     if (Array.isArray(sale.products)) {
                         let saleMargin = 0;
-                        sale.products.forEach(product => {
+                        sale.products.forEach((product) => {
                             const quantity = product.quantity || 0;
                             const sellingPrice = product.SellingPrice || 0;
                             const productPrice = product.productPrice || 0;
@@ -1535,7 +1451,8 @@ class SaleServices extends baseServices_1.default {
                 // If no sales data, create default entry for the requested date range
                 if (dailyStats.length === 0) {
                     const referenceDate = startDate ? new Date(startDate) : today;
-                    dailyStats = [{
+                    dailyStats = [
+                        {
                             _id: {
                                 year: referenceDate.getFullYear(),
                                 month: referenceDate.getMonth() + 1,
@@ -1544,7 +1461,8 @@ class SaleServices extends baseServices_1.default {
                             dailyTotal: 0,
                             dailyProfit: 0,
                             ordersCount: 0
-                        }];
+                        }
+                    ];
                 }
                 // Add expenses into daily stats
                 const dailyStatsWithExpenses = yield this.addExpensesToDailyStats(dailyStats);
@@ -1562,17 +1480,17 @@ class SaleServices extends baseServices_1.default {
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" },
-                                month: { $month: "$date" },
-                                day: { $dayOfMonth: "$date" }
+                                year: { $year: '$date' },
+                                month: { $month: '$date' },
+                                day: { $dayOfMonth: '$date' }
                             },
-                            totalCreditAmount: { $sum: "$totalAmount" },
+                            totalCreditAmount: { $sum: '$totalAmount' },
                             totalCreditCount: { $sum: 1 },
-                            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
-                            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+                            totalPaidAmount: { $sum: { $ifNull: ['$paidAmount', 0] } },
+                            totalRemainingCredit: { $sum: { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] } }
                         }
                     },
-                    { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
+                    { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
                 ]);
                 // Get total quantity sold
                 const quantityStats = yield this.model.aggregate([
@@ -1585,27 +1503,23 @@ class SaleServices extends baseServices_1.default {
                             status: { $in: ['approved', 'credit'] }
                         }
                     },
-                    { $unwind: "$products" },
+                    { $unwind: '$products' },
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" },
-                                month: { $month: "$date" },
-                                day: { $dayOfMonth: "$date" }
+                                year: { $year: '$date' },
+                                month: { $month: '$date' },
+                                day: { $dayOfMonth: '$date' }
                             },
-                            totalQuantity: { $sum: "$products.quantity" }
+                            totalQuantity: { $sum: '$products.quantity' }
                         }
                     },
-                    { $sort: { "_id.year": -1, "_id.month": -1, "_id.day": -1 } }
+                    { $sort: { '_id.year': -1, '_id.month': -1, '_id.day': -1 } }
                 ]);
                 // Combine all stats together
-                const finalStats = dailyStatsWithExpenses.map(stat => {
-                    const matchingCredit = creditStats.find(cs => cs._id.year === stat._id.year &&
-                        cs._id.month === stat._id.month &&
-                        cs._id.day === stat._id.day);
-                    const matchingQuantity = quantityStats.find(qs => qs._id.year === stat._id.year &&
-                        qs._id.month === stat._id.month &&
-                        qs._id.day === stat._id.day);
+                const finalStats = dailyStatsWithExpenses.map((stat) => {
+                    const matchingCredit = creditStats.find((cs) => cs._id.year === stat._id.year && cs._id.month === stat._id.month && cs._id.day === stat._id.day);
+                    const matchingQuantity = quantityStats.find((qs) => qs._id.year === stat._id.year && qs._id.month === stat._id.month && qs._id.day === stat._id.day);
                     return Object.assign(Object.assign({}, stat), { totalSales: stat.dailyTotal || 0, totalMargin: stat.dailyProfit || 0, totalExpenses: stat.expenses || 0, totalCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditAmount) || 0, remainingCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalRemainingCredit) || 0, totalQuantity: (matchingQuantity === null || matchingQuantity === void 0 ? void 0 : matchingQuantity.totalQuantity) || 0, 
                         // Original credit stats
                         totalCreditAmount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditAmount) || 0, totalCreditCount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditCount) || 0, totalPaidCreditAmount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalPaidAmount) || 0, totalRemainingCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalRemainingCredit) || 0, 
@@ -1660,42 +1574,40 @@ class SaleServices extends baseServices_1.default {
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" },
-                                month: { $month: "$date" }
+                                year: { $year: '$date' },
+                                month: { $month: '$date' }
                             },
-                            totalCreditAmount: { $sum: "$totalAmount" },
+                            totalCreditAmount: { $sum: '$totalAmount' },
                             totalCreditCount: { $sum: 1 },
-                            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
-                            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+                            totalPaidAmount: { $sum: { $ifNull: ['$paidAmount', 0] } },
+                            totalRemainingCredit: { $sum: { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] } }
                         }
                     },
-                    { $sort: { "_id.year": -1, "_id.month": -1 } }
+                    { $sort: { '_id.year': -1, '_id.month': -1 } }
                 ]);
                 // Get total quantity sold - only approved and credit
                 const quantityStats = yield this.model.aggregate([
                     Object.assign(Object.assign({}, matchStage), { $match: Object.assign(Object.assign({}, matchStage.$match), { status: { $in: ['approved', 'credit'] } }) }),
-                    { $unwind: "$products" },
+                    { $unwind: '$products' },
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" },
-                                month: { $month: "$date" }
+                                year: { $year: '$date' },
+                                month: { $month: '$date' }
                             },
-                            totalQuantity: { $sum: "$products.quantity" }
+                            totalQuantity: { $sum: '$products.quantity' }
                         }
                     },
-                    { $sort: { "_id.year": -1, "_id.month": -1 } }
+                    { $sort: { '_id.year': -1, '_id.month': -1 } }
                 ]);
                 // Combine all stats
-                const finalStats = monthlyStatsWithExpenses.map(stat => {
-                    const matchingCredit = creditStats.find(cs => cs._id.year === stat._id.year &&
-                        cs._id.month === stat._id.month);
-                    const matchingQuantity = quantityStats.find(qs => qs._id.year === stat._id.year &&
-                        qs._id.month === stat._id.month);
+                const finalStats = monthlyStatsWithExpenses.map((stat) => {
+                    const matchingCredit = creditStats.find((cs) => cs._id.year === stat._id.year && cs._id.month === stat._id.month);
+                    const matchingQuantity = quantityStats.find((qs) => qs._id.year === stat._id.year && qs._id.month === stat._id.month);
                     return Object.assign(Object.assign({}, stat), { 
                         // Required metrics
                         totalSales: stat.monthlyTotal || 0, totalMargin: stat.monthlyProfit || 0, totalExpenses: stat.expenses || 0, totalCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditAmount) || 0, remainingCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalRemainingCredit) || 0, totalQuantity: (matchingQuantity === null || matchingQuantity === void 0 ? void 0 : matchingQuantity.totalQuantity) || 0, 
-                        // Original credit stats  
+                        // Original credit stats
                         totalCreditAmount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditAmount) || 0, totalCreditCount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditCount) || 0, totalPaidCreditAmount: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalPaidAmount) || 0, totalRemainingCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalRemainingCredit) || 0, 
                         // Net profit (sales margin minus expenses)
                         netProfit: (stat.monthlyProfit || 0) - (stat.expenses || 0) });
@@ -1743,7 +1655,7 @@ class SaleServices extends baseServices_1.default {
                         const existingDebit = yield debits_models_1.DebitModel.findOne({ saleId: id });
                         if (!existingDebit) {
                             yield debits_models_1.DebitModel.create({
-                                productName: oldSale.products.map(p => p.productName).join(', '),
+                                productName: oldSale.products.map((p) => p.productName).join(', '),
                                 totalAmount: oldSale.totalAmount,
                                 paidAmount: oldSale.paidAmount || 0,
                                 remainingAmount: oldSale.totalAmount - (oldSale.paidAmount || 0),
@@ -1773,7 +1685,7 @@ class SaleServices extends baseServices_1.default {
                     yield debits_models_1.DebitModel.deleteOne({ saleId: id });
                 }
                 else if (status === 'credit') {
-                    // FIXED: Update status but keep the sale record
+                    //   // FIXED: Update status but keep the sale record
                     yield this.model.findByIdAndUpdate(id, {
                         status: 'credit',
                         inventoryStatus: 'deducted' // Inventory is deducted for credit sales
@@ -1782,7 +1694,7 @@ class SaleServices extends baseServices_1.default {
                     const existingDebit = yield debits_models_1.DebitModel.findOne({ saleId: id });
                     if (!existingDebit) {
                         yield debits_models_1.DebitModel.create({
-                            productName: oldSale.products.map(p => p.productName).join(', '),
+                            productName: oldSale.products.map((p) => p.productName).join(', '),
                             totalAmount: oldSale.totalAmount,
                             paidAmount: oldSale.paidAmount || 0,
                             remainingAmount: oldSale.totalAmount - (oldSale.paidAmount || 0),
@@ -1820,10 +1732,24 @@ class SaleServices extends baseServices_1.default {
             }
         });
     }
+    updateDeliveryStatus(id, deliveryStatus) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                const updatedSale = yield this.model.findByIdAndUpdate(id, { $set: { deliveryStatus: deliveryStatus } }, { new: true });
+                if (!updatedSale) {
+                    throw new customError_1.default(404, 'Sale not found');
+                }
+                return updatedSale;
+            }
+            catch (error) {
+                throw new customError_1.default(400, error.message || 'Failed to update delivery status');
+            }
+        });
+    }
     getAllWithInventoryStatus(query) {
         return __awaiter(this, void 0, void 0, function* () {
             const { page = 1, limit = 10, search = '', sortBy = 'createdAt', sortOrder = 'desc', filterBy = 'all', // Changed default to 'all'
-            status, inventoryStatus, collectionStatus } = query;
+            status, inventoryStatus, collectionStatus, deliveryStatus } = query;
             let matchStage = {};
             // Add search functionality
             if (search) {
@@ -1840,10 +1766,10 @@ class SaleServices extends baseServices_1.default {
             if (inventoryStatus) {
                 matchStage.inventoryStatus = inventoryStatus;
             }
-            // Filter by collection status (optional)  
-            // if (collectionStatus !== undefined) {
-            //   matchStage.isProductsCollected = collectionStatus === 'true';
-            // }
+            // Filter by delivery status (optional)
+            if (deliveryStatus) {
+                matchStage.deliveryStatus = deliveryStatus;
+            }
             // Date filtering - only apply if specifically requested
             if (filterBy && filterBy !== 'all') {
                 const now = new Date();
@@ -1872,12 +1798,7 @@ class SaleServices extends baseServices_1.default {
             const skip = (page - 1) * limit;
             const sortStage = {};
             sortStage[sortBy] = sortOrder === 'desc' ? -1 : 1;
-            const pipeline = [
-                { $match: matchStage },
-                { $sort: sortStage },
-                { $skip: skip },
-                { $limit: parseInt(limit) }
-            ];
+            const pipeline = [{ $match: matchStage }, { $sort: sortStage }, { $skip: skip }, { $limit: parseInt(limit) }];
             const [sales, totalCount] = yield Promise.all([
                 this.model.aggregate(pipeline),
                 this.model.countDocuments(matchStage)
@@ -1947,34 +1868,34 @@ class SaleServices extends baseServices_1.default {
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" }
+                                year: { $year: '$date' }
                             },
-                            totalCreditAmount: { $sum: "$totalAmount" },
+                            totalCreditAmount: { $sum: '$totalAmount' },
                             totalCreditCount: { $sum: 1 },
-                            totalPaidAmount: { $sum: { $ifNull: ["$paidAmount", 0] } },
-                            totalRemainingCredit: { $sum: { $subtract: ["$totalAmount", { $ifNull: ["$paidAmount", 0] }] } }
+                            totalPaidAmount: { $sum: { $ifNull: ['$paidAmount', 0] } },
+                            totalRemainingCredit: { $sum: { $subtract: ['$totalAmount', { $ifNull: ['$paidAmount', 0] }] } }
                         }
                     },
-                    { $sort: { "_id.year": -1 } }
+                    { $sort: { '_id.year': -1 } }
                 ]);
                 // Get total quantity sold
                 const quantityStats = yield this.model.aggregate([
                     Object.assign(Object.assign({}, matchStage), { $match: Object.assign(Object.assign({}, matchStage.$match), { status: { $in: ['approved', 'credit'] } }) }),
-                    { $unwind: "$products" },
+                    { $unwind: '$products' },
                     {
                         $group: {
                             _id: {
-                                year: { $year: "$date" }
+                                year: { $year: '$date' }
                             },
-                            totalQuantity: { $sum: "$products.quantity" }
+                            totalQuantity: { $sum: '$products.quantity' }
                         }
                     },
-                    { $sort: { "_id.year": -1 } }
+                    { $sort: { '_id.year': -1 } }
                 ]);
                 // Combine all stats
-                const finalStats = yearlyStatsWithExpenses.map(stat => {
-                    const matchingCredit = creditStats.find(cs => cs._id.year === stat._id.year);
-                    const matchingQuantity = quantityStats.find(qs => qs._id.year === stat._id.year);
+                const finalStats = yearlyStatsWithExpenses.map((stat) => {
+                    const matchingCredit = creditStats.find((cs) => cs._id.year === stat._id.year);
+                    const matchingQuantity = quantityStats.find((qs) => qs._id.year === stat._id.year);
                     return Object.assign(Object.assign({}, stat), { 
                         // Required metrics
                         totalSales: stat.yearlyTotal || 0, totalMargin: stat.yearlyProfit || 0, totalExpenses: stat.expenses || 0, totalCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalCreditAmount) || 0, remainingCredit: (matchingCredit === null || matchingCredit === void 0 ? void 0 : matchingCredit.totalRemainingCredit) || 0, totalQuantity: (matchingQuantity === null || matchingQuantity === void 0 ? void 0 : matchingQuantity.totalQuantity) || 0, 

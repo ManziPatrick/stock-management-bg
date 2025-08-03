@@ -70,6 +70,12 @@ const saleTransactionSchema = new mongoose_1.Schema({
         default: 'reserved'
     },
     isProductsCollected: { type: Boolean, default: false },
+    deliveryStatus: {
+        type: String,
+        enum: ['pending', 'out_for_delivery', 'delivered', 'returned'],
+        default: 'pending'
+    },
+    totalQuantity: { type: Number, default: 0 },
     intendedAsCreditSale: { type: Boolean, default: false },
     debitDetails: {
         paidAmount: { type: Number },

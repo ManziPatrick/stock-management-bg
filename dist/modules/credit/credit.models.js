@@ -37,8 +37,14 @@ exports.CreditModel = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 const CreditSchema = new mongoose_1.Schema({
     productId: {
-        type: String,
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Product',
         required: true
+    },
+    quantity: {
+        type: Number,
+        required: true,
+        min: 1
     },
     totalAmount: {
         type: Number,
@@ -70,13 +76,35 @@ const CreditSchema = new mongoose_1.Schema({
         }
     },
     paymentDueDate: {
-        type: String,
+        type: Date,
         required: true
     },
     status: {
         type: String,
         enum: ['PENDING', 'COMPLETED', 'REJECTED'],
         default: 'PENDING'
+    },
+    deliveryStatus: {
+        type: String,
+        enum: ['NOT_DELIVERED', 'DELIVERED', 'RESERVED'],
+        default: 'RESERVED'
+    },
+    reservedStock: {
+        type: Number,
+        required: true,
+        min: 0
+    },
+    verifiedBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'user'
+    },
+    verificationDate: {
+        type: Date
+    },
+    createdBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'user',
+        required: true
     }
 }, {
     timestamps: true

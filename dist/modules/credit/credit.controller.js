@@ -15,7 +15,7 @@ const catchAsync_1 = require("../utils/catchAsync");
 class CreditController {
     constructor() {
         this.createCredit = (0, catchAsync_1.catchAsync)((req, res) => __awaiter(this, void 0, void 0, function* () {
-            const credit = yield this.creditService.createCredit(req.body);
+            const credit = yield this.creditService.createCredit(req.body, req.user._id);
             res.status(201).json({
                 status: 'success',
                 data: credit,
@@ -58,6 +58,29 @@ class CreditController {
             res.status(200).json({
                 status: 'success',
                 data: credit,
+            });
+        }));
+        this.verifyDelivery = (0, catchAsync_1.catchAsync)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            const credit = yield this.creditService.verifyDelivery(req.body, req.user._id);
+            res.status(200).json({
+                status: 'success',
+                data: credit,
+            });
+        }));
+        this.getStockSummary = (0, catchAsync_1.catchAsync)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            const summary = yield this.creditService.getStockSummary(req.params.productId);
+            res.status(200).json({
+                status: 'success',
+                data: summary,
+            });
+        }));
+        this.getPendingDeliveries = (0, catchAsync_1.catchAsync)((req, res) => __awaiter(this, void 0, void 0, function* () {
+            // For non-admin users, filter by their own created credits
+            const userId = req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN' ? undefined : req.user._id;
+            const deliveries = yield this.creditService.getPendingDeliveries(userId);
+            res.status(200).json({
+                status: 'success',
+                data: deliveries,
             });
         }));
         this.creditService = new credit_service_1.CreditService();

@@ -21,7 +21,8 @@ const createSchema = zod_1.z.object({
     measurement: measurementSchema.optional(),
     category: zod_1.z.string().min(1, { message: 'Category is required' }),
     brand: zod_1.z.string().optional(),
-    price: zod_1.z.number().min(1, { message: 'Price must be greater than 1!' }),
+    price: zod_1.z.number().min(0, { message: 'Original price cannot be negative' }),
+    default_price: zod_1.z.number().min(1, { message: 'Default price must be greater than 1!' }),
     stock: zod_1.z.number().min(0, { message: 'Stock cannot be negative' }),
     description: zod_1.z.string().optional()
 });

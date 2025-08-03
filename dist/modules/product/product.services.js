@@ -21,6 +21,7 @@ const user_model_1 = __importDefault(require("../user/user.model"));
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const seller_model_1 = __importDefault(require("../seller/seller.model"));
 const customError_1 = __importDefault(require("../../errors/customError"));
+const priceFilter_1 = require("../../middlewares/priceFilter");
 class ProductServices extends baseServices_1.default {
     constructor(model, modelName) {
         super(model, modelName);
@@ -108,7 +109,8 @@ class ProductServices extends baseServices_1.default {
           <p>Action: ${action}</p>
           ${details ? `<p>${details}</p>` : ''}
           <p>Current Stock: ${product.stock}</p>
-          <p>Price: ${product.price}</p>
+          <p>Selling Price: ${product.default_price}</p>
+          ${product.price > 0 ? `<p>Original Price: ${product.price}</p>` : ''}
           <p>Category: ${product.category}</p>
           ${measurementInfo}
           <p>Time: ${new Date().toLocaleString()}</p>
@@ -265,11 +267,12 @@ class ProductServices extends baseServices_1.default {
             }
         });
     }
-    create(payload, userId) {
+    create(payload, userId, userRole) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 // Log incoming payload for debugging
                 console.log('Creating product with payload:', payload);
+                console.log('User role:', userRole);
                 // Fix measurement structure if needed
                 if (payload.measurement && payload.measurement['measurement'] && !payload.measurement['type']) {
                     payload.measurement = {
@@ -278,7 +281,30 @@ class ProductServices extends baseServices_1.default {
                         value: payload.measurement['value']
                     };
                 }
-                const productData = Object.assign(Object.assign(Object.assign(Object.assign({}, payload), { user: new mongoose_1.Types.ObjectId(userId), seller: new mongoose_1.Types.ObjectId(payload.seller), category: new mongoose_1.Types.ObjectId(payload.category), createdBy: new mongoose_1.Types.ObjectId(userId) }), (payload.brand && { brand: new mongoose_1.Types.ObjectId(payload.brand) })), { stock: Number(payload.stock) });
+                // Validate that default_price is provided
+                if (!payload.default_price) {
+                    throw new customError_1.default(400, 'Default price is required');
+                }
+                // Handle price logic based on user role
+                let finalPrice = 0; // Default to 0 for non-admins
+                let finalDefaultPrice = payload.default_price;
+                // Only ADMIN and SUPER_ADMIN can set the original price
+                if ((0, priceFilter_1.canSetOriginalPrice)(userRole) && payload.price !== undefined) {
+                    finalPrice = payload.price; // Use the custom price they specified
+                    console.log('Admin/Super_Admin setting custom price:', payload.price);
+                }
+                else {
+                    console.log('Non-admin user - setting price to 0 for admin to update later');
+                }
+                console.log('Price calculation:', {
+                    userRole,
+                    canSetOriginalPrice: (0, priceFilter_1.canSetOriginalPrice)(userRole),
+                    payloadPrice: payload.price,
+                    payloadDefaultPrice: payload.default_price,
+                    finalPrice,
+                    finalDefaultPrice
+                });
+                const productData = Object.assign(Object.assign(Object.assign(Object.assign({}, payload), { user: new mongoose_1.Types.ObjectId(userId), seller: new mongoose_1.Types.ObjectId(payload.seller), category: new mongoose_1.Types.ObjectId(payload.category), createdBy: new mongoose_1.Types.ObjectId(userId) }), (payload.brand && { brand: new mongoose_1.Types.ObjectId(payload.brand) })), { price: finalPrice, default_price: finalDefaultPrice, stock: Number(payload.stock) });
                 console.log('Product data to create:', productData);
                 // Check seller existence
                 const seller = yield seller_model_1.default.findById(payload.seller);
@@ -344,8 +370,22 @@ class ProductServices extends baseServices_1.default {
                     console.log('Measurement validation failed for:', payload.measurement);
                     throw new customError_1.default(400, 'Invalid measurement data');
                 }
+                // Handle price updates based on user role
+                const updateData = Object.assign({}, payload);
+                // Only ADMIN and SUPER_ADMIN can update original price
+                if (payload.price !== undefined && (0, priceFilter_1.canSetOriginalPrice)(options === null || options === void 0 ? void 0 : options.userRole)) {
+                    updateData.price = payload.price;
+                }
+                else if (payload.price !== undefined && !(0, priceFilter_1.canSetOriginalPrice)(options === null || options === void 0 ? void 0 : options.userRole)) {
+                    delete updateData.price; // Remove price from update if user doesn't have permission
+                    console.log("🚫 User doesn't have permission to update original price");
+                }
+                // Default price can always be updated if provided
+                if (payload.default_price !== undefined) {
+                    updateData.default_price = payload.default_price;
+                }
                 // Update the product without using transactions
-                const updatedProduct = yield this.model.findByIdAndUpdate(id, Object.assign(Object.assign(Object.assign(Object.assign({}, payload), (payload.seller && { seller: new mongoose_1.Types.ObjectId(payload.seller) })), (payload.category && { category: new mongoose_1.Types.ObjectId(payload.category) })), (payload.brand && { brand: new mongoose_1.Types.ObjectId(payload.brand) })), { new: true }).populate(['category', 'brand', 'seller']);
+                const updatedProduct = yield this.model.findByIdAndUpdate(id, Object.assign(Object.assign(Object.assign(Object.assign({}, updateData), (updateData.seller && { seller: new mongoose_1.Types.ObjectId(updateData.seller) })), (updateData.category && { category: new mongoose_1.Types.ObjectId(updateData.category) })), (updateData.brand && { brand: new mongoose_1.Types.ObjectId(updateData.brand) })), { new: true }).populate(['category', 'brand', 'seller']);
                 if (!updatedProduct) {
                     throw new customError_1.default(404, 'Product not found');
                 }
@@ -379,82 +419,6 @@ class ProductServices extends baseServices_1.default {
                             console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
                             try {
                                 yield purchase_model_1.default.findByIdAndUpdate(purchase._id, updates, { session: undefined } // explicitly set session to undefined
-                                );
-                            }
-                            catch (purchaseError) {
-                                console.error(`❌ Error updating purchase ${purchase._id}:`, purchaseError);
-                                // Continue with other purchases even if one fails
-                            }
-                        }
-                        else {
-                            console.log(`⚠️ No changes needed for purchase ${purchase._id}`);
-                        }
-                    }
-                }
-                else {
-                    console.log("⚠️ Purchases not updated. Flag not set.");
-                }
-                yield this.sendProductNotification(updatedProduct, 'Updated');
-                yield this.checkAndNotifyStock(updatedProduct);
-                return {
-                    success: true,
-                    statusCode: 200,
-                    message: 'Product updated successfully',
-                    data: updatedProduct
-                };
-            }
-            catch (error) {
-                console.error("❌ Error updating product:", error);
-                if (error instanceof customError_1.default)
-                    throw error;
-                if (error.name === 'ValidationError') {
-                    throw new customError_1.default(400, Object.values(error.errors).map((err) => err.message).join(', '));
-                }
-                if (error.code === 11000) {
-                    throw new customError_1.default(400, 'Duplicate product entry');
-                }
-                throw new customError_1.default(500, `Failed to update product: ${error.message}`);
-            }
-        });
-    }
-    update(id, payload, options) {
-        return __awaiter(this, void 0, void 0, function* () {
-            try {
-                console.log("🚀 Updating product:", id);
-                console.log("🔄 Update Purchases Flag:", options === null || options === void 0 ? void 0 : options.updatePurchases);
-                console.log("📦 Payload received:", payload);
-                if (payload.measurement && !this.validateMeasurement(payload.measurement)) {
-                    throw new customError_1.default(400, 'Invalid measurement data');
-                }
-                // First check if product exists
-                const productExists = yield this.model.findById(id);
-                if (!productExists) {
-                    throw new customError_1.default(404, 'Product not found');
-                }
-                // Update the product without using transactions
-                const updatedProduct = yield this.model.findByIdAndUpdate(id, Object.assign(Object.assign(Object.assign(Object.assign({}, payload), (payload.seller && { seller: new mongoose_1.Types.ObjectId(payload.seller) })), (payload.category && { category: new mongoose_1.Types.ObjectId(payload.category) })), (payload.brand && { brand: new mongoose_1.Types.ObjectId(payload.brand) })), { new: true }).populate(['category', 'brand', 'seller']);
-                console.log("✅ Product updated successfully:", updatedProduct);
-                // --- Update Purchase Records if Flag is True ---
-                if (options === null || options === void 0 ? void 0 : options.updatePurchases) {
-                    console.log("🔄 Searching for purchases with productId:", id);
-                    const purchases = yield purchase_model_1.default.find({
-                        product: id,
-                        stockAddition: { $ne: true }
-                    });
-                    console.log("🛒 Purchases found:", purchases.length);
-                    for (const purchase of purchases) {
-                        const updates = {};
-                        if (payload.price && payload.price !== purchase.unitPrice) {
-                            updates.unitPrice = payload.price;
-                            updates.totalPrice = payload.price * purchase.quantity;
-                        }
-                        if (payload.measurement && JSON.stringify(payload.measurement) !== JSON.stringify(purchase.measurement)) {
-                            updates.measurement = payload.measurement;
-                        }
-                        if (Object.keys(updates).length > 0) {
-                            console.log(`🔄 Updating purchase ${purchase._id} with:`, updates);
-                            try {
-                                yield purchase_model_1.default.findByIdAndUpdate(purchase._id, updates, { new: true } // Remove session completely
                                 );
                             }
                             catch (purchaseError) {
