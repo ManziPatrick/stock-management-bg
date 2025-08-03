@@ -28,6 +28,8 @@ export interface ISaleTransaction {
   // New fields for inventory tracking
   inventoryStatus: 'reserved' | 'deducted' | 'released'; // Track inventory state
   isProductsCollected: boolean; // Whether customer has taken the products
+  deliveryStatus?: 'pending' | 'out_for_delivery' | 'delivered' | 'returned';
+  totalQuantity: number; // Total quantity of products in the sale
   createdAt: Date;
   updatedAt: Date;
   

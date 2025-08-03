@@ -10,7 +10,8 @@ import { Types } from 'mongoose';
 import { IProduct } from './product.interface';
 import Purchase from '../purchase/purchase.model';
 import Product from './product.model';
-import { USER_ROLE } from '../../constant/userRole';
+import { UserRole } from '../../constant/userRole';
+import { filterPriceFields } from '../../middlewares/priceFilter';
 
 class ProductControllers {
   services = productServices;
@@ -19,61 +20,86 @@ class ProductControllers {
    * create new product
    */
 
-create = [
-  upload.array('images', 5),
-  uploadToCloudinary,
-  asyncHandler(async (req: Request, res: Response) => {
-    try {
-      const imageUrls = (req.body as any).cloudinaryUrls || [];
-      
-      // Parse measurement if it's a string
-      let measurement;
+  create = [
+    upload.array('images', 5),
+    uploadToCloudinary,
+    asyncHandler(async (req: Request, res: Response) => {
       try {
-        measurement = typeof req.body.measurement === 'string' 
-          ? JSON.parse(req.body.measurement)
-          : req.body.measurement;
-          
-        // Fix the measurement structure if it has 'measurement' instead of 'type'
-        if (measurement && measurement.measurement && !measurement.type) {
-          measurement = {
-            type: measurement.measurement,
-            unit: measurement.unit,
-            value: measurement.value
-          };
+        const imageUrls = (req.body as any).cloudinaryUrls || [];
+        
+        // Parse measurement if it's a string
+        let measurement;
+        try {
+          measurement = typeof req.body.measurement === 'string' 
+            ? JSON.parse(req.body.measurement)
+            : req.body.measurement;
+            
+          // Fix the measurement structure if it has 'measurement' instead of 'type'
+          if (measurement && measurement.measurement && !measurement.type) {
+            measurement = {
+              type: measurement.measurement,
+              unit: measurement.unit,
+              value: measurement.value
+            };
+          }
+        } catch (error) {
+          throw new CustomError(400, 'Invalid measurement format');
         }
-      } catch (error) {
-        throw new CustomError(400, 'Invalid measurement format');
+  
+        // Helper function to safely parse numbers
+        const safeParseNumber = (value: any): number | undefined => {
+          if (value === undefined || value === null || value === '') {
+            return undefined;
+          }
+          const num = Number(value);
+          return isNaN(num) || !isFinite(num) ? undefined : num;
+        };
+  
+        // Debug logging to see what we're receiving
+        console.log('Request body fields:', {
+          quantity: req.body.quantity,
+          stock: req.body.stock,
+          price: req.body.price,
+          default_price: req.body.default_price
+        });
+  
+        const productData: Partial<IProduct> = {
+          name: req.body.name,
+          seller: new Types.ObjectId(req.body.seller),
+          category: new Types.ObjectId(req.body.category),
+          ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
+          price: (req.user.role === "ADMIN" || req.user.role === "SUPER_ADMIN") ? safeParseNumber(req.body.price) : undefined,
+          default_price: safeParseNumber(req.body.default_price),
+          // Try multiple field names for stock/quantity
+          stock: safeParseNumber(req.body.stock || req.body.quantity),
+          description: req.body.description,
+          unit: req.body.unit,
+          measurement: measurement,
+          images: imageUrls,
+          user: new Types.ObjectId(req.user._id),
+          createdBy: new Types.ObjectId(req.user._id)
+        };
+  
+        // Remove undefined fields to keep the payload clean
+        Object.keys(productData).forEach(key => {
+          if (productData[key] === undefined) {
+            delete productData[key];
+          }
+        });
+  
+        console.log('Product data before sending to service:', productData);
+        const result = await this.services.create(productData, req.user._id, req.user.role);
+        sendResponse(res, result);
+      } catch (error: any) {
+        console.error('Error in product creation controller:', error);
+        sendResponse(res, {
+          success: false,
+          statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+          message: error.message || 'Failed to create product'
+        });
       }
-
-      const productData: Partial<IProduct> = {
-        name: req.body.name,
-        seller: new Types.ObjectId(req.body.seller),
-        category: new Types.ObjectId(req.body.category),
-        ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
-        price: (req.user.role === "ADMIN" || req.user.role === "SUPER_ADMIN") ? Number(req.body.price) : undefined,
-        default_price: Number(req.body.default_price),
-        stock: Number(req.body.quantity),
-        description: req.body.description,
-        unit: req.body.unit,
-        measurement: measurement,
-        images: imageUrls,
-        user: new Types.ObjectId(req.user._id),
-        createdBy: new Types.ObjectId(req.user._id)
-      };
-
-      console.log('Product data before sending to service:', productData);
-      const result = await this.services.create(productData, req.user._id, req.user.role);
-      sendResponse(res, result);
-    } catch (error: any) {
-      console.error('Error in product creation controller:', error);
-      sendResponse(res, {
-        success: false,
-        statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
-        message: error.message || 'Failed to create product'
-      });
-    }
-  })
-];
+    })
+  ];
   /**
    * Add product to stock
    */
@@ -97,6 +123,9 @@ console.log("kjk,h",)
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
 
+    // Filter price fields based on user role
+    const filteredData = filterPriceFields(result.data, req.user.role);
+
     sendResponse(res, {
       success: true,
       statusCode: httpStatus.OK,
@@ -107,7 +136,7 @@ console.log("kjk,h",)
         total: result?.totalCount || 0,
         totalPage: Math.ceil(result?.totalCount / limit)
       },
-      data: result.data
+      data: filteredData
     });
   });
 
@@ -130,33 +159,162 @@ console.log("kjk,h",)
   readSingle = asyncHandler(async (req, res) => {
     const result = await this.services.read(req.params.id, req.user._id);
 
+    // Filter price fields based on user role
+    const filteredData = filterPriceFields(result, req.user.role);
+
     sendResponse(res, {
       success: true,
       statusCode: httpStatus.OK,
       message: 'Product fetched successfully!',
-      data: result
+      data: filteredData
     });
   });
 
   /**
    * update product
    */
-  updateProduct = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const updatePurchases = req.query.updatePurchases === 'true';
-    const payload = req.body;
+  updateProduct = [
+    upload.array('images', 5),
+    uploadToCloudinary,
+    asyncHandler(async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const updatePurchases = req.query.updatePurchases === 'true';
+        const imageUrls = (req.body as any).cloudinaryUrls || [];
+        
+        // Parse measurement if it's a string
+        let measurement;
+        try {
+          measurement = typeof req.body.measurement === 'string' 
+            ? JSON.parse(req.body.measurement)
+            : req.body.measurement;
+            
+          // Fix the measurement structure if it has 'measurement' instead of 'type'
+          if (measurement && measurement.measurement && !measurement.type) {
+            measurement = {
+              type: measurement.measurement,
+              unit: measurement.unit,
+              value: measurement.value
+            };
+          }
+        } catch (error) {
+          throw new CustomError(400, 'Invalid measurement format');
+        }
   
-    const result = await productServices.update(id, payload, { 
-      updatePurchases,
-      userId: req.user._id 
-    });
-
-    sendResponse(res, {
-      success: true,
-      statusCode: httpStatus.OK,
-      message: 'Product updated successfully!',
-      data: result,
-    });
+        // Helper function to safely parse numbers
+        const safeParseNumber = (value: any): number | undefined => {
+          if (value === undefined || value === null || value === '') {
+            return undefined;
+          }
+          const num = Number(value);
+          return isNaN(num) || !isFinite(num) ? undefined : num;
+        };
+  
+        // Debug logging to see what we're receiving
+        console.log('Update request body fields:', {
+          quantity: req.body.quantity,
+          stock: req.body.stock,
+          price: req.body.price,
+          default_price: req.body.default_price
+        });
+  
+        const updateData: Partial<IProduct> = {
+          ...(req.body.name && { name: req.body.name }),
+          ...(req.body.seller && { seller: new Types.ObjectId(req.body.seller) }),
+          ...(req.body.category && { category: new Types.ObjectId(req.body.category) }),
+          ...(req.body.brand && { brand: new Types.ObjectId(req.body.brand) }),
+          // Only ADMIN and SUPER_ADMIN can update original price
+          price: (req.user.role === "ADMIN" || req.user.role === "SUPER_ADMIN") ? safeParseNumber(req.body.price) : undefined,
+          default_price: safeParseNumber(req.body.default_price),
+          // Try multiple field names for stock/quantity
+          ...(req.body.stock !== undefined && { stock: safeParseNumber(req.body.stock || req.body.quantity) }),
+          ...(req.body.description && { description: req.body.description }),
+          ...(req.body.unit && { unit: req.body.unit }),
+          ...(measurement && { measurement: measurement }),
+          // Only add images if new ones are uploaded
+          ...(imageUrls.length > 0 && { images: imageUrls })
+        };
+  
+        // Remove undefined fields to keep the payload clean
+        Object.keys(updateData).forEach(key => {
+          if (updateData[key] === undefined) {
+            delete updateData[key];
+          }
+        });
+  
+        console.log('Product update data before sending to service:', updateData);
+        
+        const result = await this.services.update(id, updateData, { 
+          updatePurchases,
+          userId: req.user._id,
+          userRole: req.user.role
+        });
+  
+        sendResponse(res, {
+          success: true,
+          statusCode: httpStatus.OK,
+          message: 'Product updated successfully!',
+          data: result,
+        });
+      } catch (error: any) {
+        console.error('Error in product update controller:', error);
+        sendResponse(res, {
+          success: false,
+          statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+          message: error.message || 'Failed to update product'
+        });
+      }
+    })
+  ];
+  
+  // New controller specifically for price updates (ADMIN/SUPER_ADMIN only)
+  updatePrice = asyncHandler(async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const updatePurchases = req.query.updatePurchases === 'true';
+      
+      // Helper function to safely parse numbers
+      const safeParseNumber = (value: any): number | undefined => {
+        if (value === undefined || value === null || value === '') {
+          return undefined;
+        }
+        const num = Number(value);
+        return isNaN(num) || !isFinite(num) ? undefined : num;
+      };
+  
+      // Only allow price and default_price updates
+      const priceUpdateData: Partial<IProduct> = {
+        ...(req.body.price !== undefined && { price: safeParseNumber(req.body.price) }),
+        ...(req.body.default_price !== undefined && { default_price: safeParseNumber(req.body.default_price) })
+      };
+  
+      // Validate that at least one price field is provided
+      if (Object.keys(priceUpdateData).length === 0) {
+        throw new CustomError(400, 'At least one price field (price or default_price) must be provided');
+      }
+  
+      console.log('Price update data:', priceUpdateData);
+      
+      const result = await this.services.update(id, priceUpdateData, { 
+        updatePurchases,
+        userId: req.user._id,
+        userRole: req.user.role
+      });
+  
+      sendResponse(res, {
+        success: true,
+        statusCode: httpStatus.OK,
+        message: 'Product price updated successfully!',
+        data: result,
+      });
+    } catch (error: any) {
+      console.error('Error in product price update controller:', error);
+      sendResponse(res, {
+        success: false,
+        statusCode: error.statusCode || httpStatus.INTERNAL_SERVER_ERROR,
+        message: error.message || 'Failed to update product price'
+      });
+    }
   });
 
   readAllPublic = asyncHandler(async (req, res) => {
@@ -170,6 +328,9 @@ console.log("kjk,h",)
   
       const page = Number(req.query.page) || 1;
       const limit = Number(req.query.limit) || 10;
+
+      // Filter price fields based on user role (for public, treat as non-admin)
+      const filteredData = filterPriceFields(result.data, req.user?.role);
   
       // Return the response with pagination data
       sendResponse(res, {
@@ -183,7 +344,7 @@ console.log("kjk,h",)
           totalPage: Math.ceil(result?.totalCount / limit),
           summary: result?.summary || null,
         },
-        data: result.data,
+        data: filteredData,
       });
     } catch (error) {
       console.error(error);

@@ -139,7 +139,8 @@ class ProductServices extends BaseServices<any> {
           <p>Action: ${action}</p>
           ${details ? `<p>${details}</p>` : ''}
           <p>Current Stock: ${product.stock}</p>
-          <p>Price: ${product.price}</p>
+          <p>Selling Price: ${product.default_price}</p>
+          ${product.price > 0 ? `<p>Original Price: ${product.price}</p>` : ''}
           <p>Category: ${product.category}</p>
           ${measurementInfo}
           <p>Time: ${new Date().toLocaleString()}</p>

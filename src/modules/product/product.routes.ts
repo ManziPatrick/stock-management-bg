@@ -38,6 +38,11 @@ productRoute.post(
     authorizeRoles('ADMIN', 'KEEPER','ACCOUNTANT','SUPER_ADMIN'),
     productControllers.getCollectionDiscrepancies
   );
+  productRoute.patch(
+    '/:id/price',
+    authorizeRoles('ADMIN','SUPER_ADMIN'), 
+    productControllers.updatePrice
+);
 // productRoute.get('/', productControllers.readAll);
 productRoute.patch('/:id/add',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(productValidator.addStockSchema), productControllers.addStock);
 productRoute.patch('/:id',authorizeRoles('KEEPER', 'ADMIN','ACCOUNTANT','SUPER_ADMIN'), validateRequest(productValidator.updateSchema), productControllers.updateProduct);

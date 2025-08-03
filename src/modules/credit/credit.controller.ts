@@ -10,7 +10,7 @@ export class CreditController {
   }
 
   createCredit = catchAsync(async (req: Request, res: Response) => {
-    const credit = await this.creditService.createCredit(req.body);
+    const credit = await this.creditService.createCredit(req.body, req.user._id);
     res.status(201).json({
       status: 'success',
       data: credit,
@@ -62,6 +62,32 @@ export class CreditController {
     res.status(200).json({
       status: 'success',
       data: credit,
+    });
+  });
+
+  verifyDelivery = catchAsync(async (req: Request, res: Response) => {
+    const credit = await this.creditService.verifyDelivery(req.body, req.user._id);
+    res.status(200).json({
+      status: 'success',
+      data: credit,
+    });
+  });
+
+  getStockSummary = catchAsync(async (req: Request, res: Response) => {
+    const summary = await this.creditService.getStockSummary(req.params.productId);
+    res.status(200).json({
+      status: 'success',
+      data: summary,
+    });
+  });
+
+  getPendingDeliveries = catchAsync(async (req: Request, res: Response) => {
+    // For non-admin users, filter by their own created credits
+    const userId = req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN' ? undefined : req.user._id;
+    const deliveries = await this.creditService.getPendingDeliveries(userId);
+    res.status(200).json({
+      status: 'success',
+      data: deliveries,
     });
   });
 }

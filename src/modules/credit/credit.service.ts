@@ -1,20 +1,55 @@
 import { CreditModel, Credit } from './credit.models';
 import { AppError } from '../utils/appError';
-import { CreateCreditDto, UpdateCreditDto, CreditQueryParams, MakePaymentDto } from './credit.interface';
+import { CreateCreditDto, UpdateCreditDto, CreditQueryParams, MakePaymentDto, VerifyDeliveryDto } from './credit.interface';
+import Product from '../product/product.model';
+import mongoose from 'mongoose';
 
 export class CreditService {
-  async createCredit(data: CreateCreditDto): Promise<Credit> {
+  async createCredit(data: CreateCreditDto, userId: string): Promise<Credit> {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       // Validate credit amount calculation
       if (data.totalAmount !== data.downPayment + data.creditAmount) {
         throw new AppError('Total amount must equal down payment plus credit amount', 400);
       }
 
-      const credit = await CreditModel.create(data);
-      return credit;
+      // Check if product exists and has sufficient stock
+      const product = await Product.findById(data.productId).session(session);
+      if (!product) {
+        throw new AppError('Product not found', 404);
+      }
+
+      if (product.stock < data.quantity) {
+        throw new AppError(`Insufficient stock. Available: ${product.stock}, Requested: ${data.quantity}`, 400);
+      }
+
+      // Reserve stock by reducing available stock
+      await Product.findByIdAndUpdate(
+        data.productId,
+        { $inc: { stock: -data.quantity } },
+        { session }
+      );
+
+      // Create credit record with reserved stock information
+      const creditData = {
+        ...data,
+        reservedStock: data.quantity,
+        deliveryStatus: 'RESERVED',
+        createdBy: userId
+      };
+
+      const credit = await CreditModel.create([creditData], { session });
+      
+      await session.commitTransaction();
+      return credit[0];
     } catch (error) {
+      await session.abortTransaction();
       if (error instanceof AppError) throw error;
       throw new AppError('Failed to create credit record', 400);
+    } finally {
+      session.endSession();
     }
   }
 
@@ -82,44 +117,141 @@ export class CreditService {
   }
 
   async updateCredit(id: string, data: UpdateCreditDto): Promise<Credit> {
-    const existingCredit = await CreditModel.findById(id);
-    if (!existingCredit) {
-      throw new AppError('Credit record not found', 404);
-    }
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    if (data.status === 'COMPLETED') {
-      data.creditAmount = 0;
-      data.downPayment = existingCredit.totalAmount;
-    }
-
-    // Validate total amount if being updated
-    if (data.totalAmount || data.downPayment || data.creditAmount) {
-      const newTotal = data.totalAmount ?? existingCredit.totalAmount;
-      const newDownPayment = data.downPayment ?? existingCredit.downPayment;
-      const newCreditAmount = data.creditAmount ?? existingCredit.creditAmount;
-
-      if (newTotal !== newDownPayment + newCreditAmount) {
-        throw new AppError('Total amount must equal down payment plus credit amount', 400);
+    try {
+      const existingCredit = await CreditModel.findById(id).session(session);
+      if (!existingCredit) {
+        throw new AppError('Credit record not found', 404);
       }
+
+      // Handle status changes that affect stock
+      if (data.status === 'REJECTED' && existingCredit.status !== 'REJECTED') {
+        // Return reserved stock to product
+        await Product.findByIdAndUpdate(
+          existingCredit.productId,
+          { $inc: { stock: existingCredit.reservedStock } },
+          { session }
+        );
+        data.deliveryStatus = 'NOT_DELIVERED';
+      }
+
+      if (data.status === 'COMPLETED') {
+        data.creditAmount = 0;
+        data.downPayment = existingCredit.totalAmount;
+      }
+
+      // Validate total amount if being updated
+      if (data.totalAmount || data.downPayment || data.creditAmount) {
+        const newTotal = data.totalAmount ?? existingCredit.totalAmount;
+        const newDownPayment = data.downPayment ?? existingCredit.downPayment;
+        const newCreditAmount = data.creditAmount ?? existingCredit.creditAmount;
+
+        if (newTotal !== newDownPayment + newCreditAmount) {
+          throw new AppError('Total amount must equal down payment plus credit amount', 400);
+        }
+      }
+
+      const credit = await CreditModel.findByIdAndUpdate(
+        id,
+        { $set: data },
+        { new: true, runValidators: true, session }
+      );
+
+      if (!credit) {
+        throw new AppError('Credit record not found', 404);
+      }
+
+      await session.commitTransaction();
+      return credit;
+    } catch (error) {
+      await session.abortTransaction();
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to update credit record', 400);
+    } finally {
+      session.endSession();
     }
-
-    const credit = await CreditModel.findByIdAndUpdate(
-      id,
-      { $set: data },
-      { new: true, runValidators: true }
-    );
-
-    if (!credit) {
-      throw new AppError('Credit record not found', 404);
-    }
-
-    return credit;
   }
 
   async deleteCredit(id: string): Promise<void> {
-    const result = await CreditModel.findByIdAndDelete(id);
-    if (!result) {
-      throw new AppError('Credit record not found', 404);
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const credit = await CreditModel.findById(id).session(session);
+      if (!credit) {
+        throw new AppError('Credit record not found', 404);
+      }
+
+      // If credit is not delivered and stock was reserved, return it to product
+      if (credit.deliveryStatus === 'RESERVED' && credit.reservedStock > 0) {
+        await Product.findByIdAndUpdate(
+          credit.productId,
+          { $inc: { stock: credit.reservedStock } },
+          { session }
+        );
+      }
+
+      await CreditModel.findByIdAndDelete(id).session(session);
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to delete credit record', 400);
+    } finally {
+      session.endSession();
+    }
+  }
+
+  async verifyDelivery(data: VerifyDeliveryDto, verifierId: string): Promise<Credit> {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const credit = await CreditModel.findById(data.creditId).session(session);
+      if (!credit) {
+        throw new AppError('Credit record not found', 404);
+      }
+
+      if (credit.deliveryStatus === 'DELIVERED') {
+        throw new AppError('Delivery already verified', 400);
+      }
+
+      const updateData: any = {
+        deliveryStatus: data.deliveryStatus,
+        verifiedBy: verifierId,
+        verificationDate: new Date()
+      };
+
+      // If delivery is not confirmed, return reserved stock to product
+      if (data.deliveryStatus === 'NOT_DELIVERED' && credit.reservedStock > 0) {
+        await Product.findByIdAndUpdate(
+          credit.productId,
+          { $inc: { stock: credit.reservedStock } },
+          { session }
+        );
+        updateData.status = 'REJECTED';
+      }
+
+      const updatedCredit = await CreditModel.findByIdAndUpdate(
+        data.creditId,
+        { $set: updateData },
+        { new: true, runValidators: true, session }
+      );
+
+      if (!updatedCredit) {
+        throw new AppError('Failed to update credit record', 500);
+      }
+
+      await session.commitTransaction();
+      return updatedCredit;
+    } catch (error) {
+      await session.abortTransaction();
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to verify delivery', 400);
+    } finally {
+      session.endSession();
     }
   }
 
@@ -196,6 +328,72 @@ export class CreditService {
     }
 
     return updatedCredit;
+  }
+
+  async getStockSummary(productId: string) {
+    try {
+      const product = await Product.findById(productId);
+      if (!product) {
+        throw new AppError('Product not found', 404);
+      }
+
+      // Get reserved stock from pending credits
+      const reservedStock = await CreditModel.aggregate([
+        {
+          $match: {
+            productId: new mongoose.Types.ObjectId(productId),
+            status: { $in: ['PENDING'] },
+            deliveryStatus: 'RESERVED'
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalReserved: { $sum: '$reservedStock' }
+          }
+        }
+      ]);
+
+      const totalReserved = reservedStock[0]?.totalReserved || 0;
+      const availableStock = product.stock;
+      const totalStock = availableStock + totalReserved;
+
+      return {
+        productId,
+        productName: product.name,
+        totalStock,
+        availableStock,
+        reservedStock: totalReserved,
+        deliveredStock: totalStock - availableStock - totalReserved
+      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError('Failed to get stock summary', 400);
+    }
+  }
+
+  async getPendingDeliveries(userId?: string) {
+    try {
+      const query: any = {
+        deliveryStatus: 'RESERVED',
+        status: 'PENDING'
+      };
+
+      // If user is provided, filter by created by user (for non-admin users)
+      if (userId) {
+        query.createdBy = userId;
+      }
+
+      const pendingDeliveries = await CreditModel.find(query)
+        .populate('productId', 'name default_price')
+        .populate('createdBy', 'name email')
+        .populate('verifiedBy', 'name email')
+        .sort({ createdAt: -1 });
+
+      return pendingDeliveries;
+    } catch (error) {
+      throw new AppError('Failed to get pending deliveries', 400);
+    }
   }
 }
 

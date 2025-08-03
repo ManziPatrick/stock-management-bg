@@ -8,6 +8,7 @@
     "dev": "ts-node-dev --transpile-only src/server.ts",
     "dev:nodemon": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "fix-indexes": "ts-node scripts/fix-invoice-indexes.ts",
+    "migrate-default-price": "ts-node scripts/add-default-price-migration.ts",
     "build": "tsc",
     "lint": "eslint src --ignore-path .eslintignore --ext .ts",
     "lint:fix": "npx eslint src --fix",

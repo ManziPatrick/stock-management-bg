@@ -9,6 +9,7 @@ export interface CreditQueryParams {
   
   export interface CreateCreditDto {
     productId: string;
+    quantity: number;
     totalAmount: number;
     downPayment: number;
     creditAmount: number;
@@ -18,11 +19,13 @@ export interface CreditQueryParams {
       email: string;
     };
     paymentDueDate: string;
-    status: 'PENDING' | 'COMPLETED' | 'REJECTED';
+    status?: 'PENDING' | 'COMPLETED' | 'REJECTED';
+    deliveryStatus?: 'NOT_DELIVERED' | 'DELIVERED' | 'RESERVED';
   }
   
   export interface UpdateCreditDto {
     productId?: string;
+    quantity?: number;
     totalAmount?: number;
     downPayment?: number;
     creditAmount?: number;
@@ -33,6 +36,13 @@ export interface CreditQueryParams {
     };
     paymentDueDate?: string;
     status?: 'PENDING' | 'COMPLETED' | 'REJECTED';
+    deliveryStatus?: 'NOT_DELIVERED' | 'DELIVERED' | 'RESERVED';
+  }
+
+  export interface VerifyDeliveryDto {
+    creditId: string;
+    deliveryStatus: 'DELIVERED' | 'NOT_DELIVERED';
+    verificationNotes?: string;
   }
   
   export interface MakePaymentDto {
